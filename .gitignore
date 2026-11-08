@@ -1,0 +1,44 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+infra/terraform/*.tfvars
+!infra/terraform/example.tfvars
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+dashboard/.next/
+dashboard/out/
+
+# Editors
+.vscode/
+.idea/
+
+# Data and local artefacts
+data/raw/
+*.sql.gz
+*.log
+.DS_Store
+Thumbs.db

@@ -14,7 +14,7 @@ EXPECTED_VARS: Final[frozenset[str]] = frozenset(
 MEM_LIMITS_MIB: Final[dict[str, int]] = {"postgres": 384}
 VOLUMES: Final[frozenset[str]] = frozenset({"pgdata"})
 SERVICES: Final[frozenset[str]] = frozenset(MEM_LIMITS_MIB)
-FILES: Final[tuple[str, ...]] = ("compose.yaml", "compose.vpc.yaml")
+FILES: Final[tuple[str, ...]] = ("compose.yaml", "compose.vpc.yaml", "compose.local.yaml")
 BIND_HOST: Final[str] = "${DATA_BIND_ADDR:?set DATA_BIND_ADDR to the data Droplet private IP}"
 PG_SETTINGS: Final[dict[str, str]] = {
     "shared_buffers": "96MB",
@@ -220,3 +220,24 @@ def test_no_all_interfaces_bind() -> None:
             assert "0.0.0.0" not in port  # noqa: S104
             assert "::" not in port.replace(BIND_HOST, "")
             assert len(port.replace(BIND_HOST, "HOST").split(":")) >= 3, port
+
+
+def test_local_ports_on_loopback() -> None:
+    assert port_strings("compose.local.yaml") == [("postgres", "127.0.0.1:5432:5432")]
+
+
+def test_test_roles_only_local() -> None:
+    mount = "20-test-roles.sql"
+    for name in FILES:
+        mounted = any(
+            mount in volume
+            for service in services(name).values()
+            for volume in service.get("volumes", [])
+        )
+        assert mounted == (name == "compose.local.yaml"), name
+    text = (COMPOSE_DIR / "postgres" / "initdb-local" / mount).read_text(encoding="utf-8")
+    assert re.findall(r"CREATE ROLE (\w+)", text) == ["refinery_test_owner", "refinery_test_app"]
+    assert re.findall(r"CREATE DATABASE (\w+) OWNER (\w+)", text) == [
+        ("refinery_watch_test", "refinery_test_owner")
+    ]
+    assert "SUPERUSER" not in text

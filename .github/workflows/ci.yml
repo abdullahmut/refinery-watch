@@ -37,7 +37,9 @@ jobs:
       - name: Install gitleaks
         run: |
           cd "$RUNNER_TEMP"
-          curl --fail --silent --show-error --location --retry 3             --remote-name "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --remote-name \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  gitleaks_${VER}_linux_x64.tar.gz" | sha256sum --check
           tar -xzf "gitleaks_${VER}_linux_x64.tar.gz" gitleaks
       - name: Scan history

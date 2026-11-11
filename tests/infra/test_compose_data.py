@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Final
 
+import pytest
 import yaml
 
 ROOT: Final[Path] = Path(__file__).resolve().parents[2]
@@ -15,6 +16,12 @@ MEM_LIMITS_MIB: Final[dict[str, int]] = {"postgres": 384}
 VOLUMES: Final[frozenset[str]] = frozenset({"pgdata"})
 SERVICES: Final[frozenset[str]] = frozenset(MEM_LIMITS_MIB)
 FILES: Final[tuple[str, ...]] = ("compose.yaml", "compose.vpc.yaml", "compose.local.yaml")
+STACKS: Final[dict[str, tuple[str, ...]]] = {
+    "production": ("compose.yaml", "compose.vpc.yaml"),
+    "laptop": ("compose.yaml", "compose.local.yaml"),
+}
+OVERRIDE_KEYS: Final[frozenset[str]] = frozenset({"ports", "volumes"})
+HBA_TARGET: Final[str] = "/etc/postgresql/pg_hba.conf"
 BIND_HOST: Final[str] = "${DATA_BIND_ADDR:?set DATA_BIND_ADDR to the data Droplet private IP}"
 PG_SETTINGS: Final[dict[str, str]] = {
     "shared_buffers": "96MB",
@@ -30,7 +37,7 @@ PG_SETTINGS: Final[dict[str, str]] = {
     "effective_cache_size": "256MB",
     "timezone": "UTC",
     "log_timezone": "UTC",
-    "hba_file": "/etc/postgresql/pg_hba.conf",
+    "hba_file": HBA_TARGET,
 }
 POSTGRES_IMAGE: Final[str] = (
     "postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9"
@@ -48,6 +55,24 @@ ROLES_SQL: Final[list[str]] = [
     "REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;",
     "REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;",
 ]
+HBA_RULES: Final[dict[str, list[tuple[str, ...]]]] = {
+    "production": [
+        ("local", "all", "postgres", "peer"),
+        ("local", "all", "all", "scram-sha-256"),
+        ("host", "all", "postgres", "0.0.0.0/0", "reject"),
+        ("host", "all", "postgres", "::/0", "reject"),
+        ("host", "all", "all", "0.0.0.0/0", "scram-sha-256"),
+        ("host", "all", "all", "::/0", "scram-sha-256"),
+    ],
+    "laptop": [
+        ("local", "all", "postgres", "peer"),
+        ("local", "all", "all", "scram-sha-256"),
+        ("host", "all", "postgres", "0.0.0.0/0", "reject"),
+        ("host", "all", "postgres", "::/0", "reject"),
+        ("host", "all", "all", "0.0.0.0/0", "scram-sha-256"),
+        ("host", "all", "all", "::/0", "scram-sha-256"),
+    ],
+}
 BACKEND_OVERHEAD_MIB: Final[int] = 6
 BACKGROUND_MIB: Final[int] = 30
 TOTAL_LIMIT_MIB: Final[int] = 704
@@ -59,6 +84,7 @@ HEALTH_KEYS: Final[frozenset[str]] = frozenset(
     {"test", "interval", "timeout", "retries", "start_period"}
 )
 VAR_PATTERN: Final[re.Pattern[str]] = re.compile(r"\$\{([A-Za-z_]+)([^}]*)\}")
+BARE_DOLLAR: Final[re.Pattern[str]] = re.compile(r"\$(?!\{)")
 
 
 def load(name: str) -> dict[str, Any]:
@@ -75,6 +101,35 @@ def services(name: str) -> dict[str, dict[str, Any]]:
     return found
 
 
+def port_strings(name: str) -> list[tuple[str, str]]:
+    """Return (service, port) pairs for every published port in one file."""
+    return [
+        (service_name, str(port))
+        for service_name, service in services(name).items()
+        for port in service.get("ports", [])
+    ]
+
+
+def merged(stack: str) -> dict[str, dict[str, Any]]:
+    """Return the services of a stack as Compose merges them.
+
+    Overrides may only add ports and volumes. Volumes merge by container path.
+    """
+    base_file, *overrides = STACKS[stack]
+    result = services(base_file)
+    for name in overrides:
+        assert set(load(name)) == {"services"}, name
+        for service_name, extra in services(name).items():
+            assert service_name in result, (name, service_name)
+            assert set(extra) <= OVERRIDE_KEYS, (name, set(extra))
+            target = result[service_name]
+            target["ports"] = [*target.get("ports", []), *extra.get("ports", [])]
+            by_path = {m.split(":")[1]: m for m in target.get("volumes", [])}
+            by_path.update({m.split(":")[1]: m for m in extra.get("volumes", [])})
+            target["volumes"] = list(by_path.values())
+    return result
+
+
 def mib(value: str) -> int:
     """Parse sizes such as 384m, 96MB and 192MiB into MiB."""
     match = re.fullmatch(r"(\d+)(m|mb|mib)", value.strip().lower())
@@ -82,9 +137,9 @@ def mib(value: str) -> int:
     return int(match.group(1))
 
 
-def pg_settings() -> dict[str, str]:
-    """Return the -c key=value pairs of the postgres command."""
-    command = services("compose.yaml")["postgres"]["command"]
+def pg_settings(stack: str = "production") -> dict[str, str]:
+    """Return the -c key=value pairs of the postgres command in a stack."""
+    command = merged(stack)["postgres"]["command"]
     assert command[0] == "postgres"
     assert set(command[1::2]) == {"-c"}
     found: dict[str, str] = {}
@@ -92,6 +147,18 @@ def pg_settings() -> dict[str, str]:
         key, _, value = item.partition("=")
         found[key] = value
     return found
+
+
+def hba_rules(stack: str) -> list[tuple[str, ...]]:
+    """Return the rules of the pg_hba.conf file a stack mounts."""
+    mounts = [m for m in merged(stack)["postgres"]["volumes"] if m.split(":")[1] == HBA_TARGET]
+    assert len(mounts) == 1
+    path = (COMPOSE_DIR / mounts[0].split(":")[0]).resolve()
+    return [
+        tuple(line.split())
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
 
 
 def makefile_recipe(target: str) -> list[str]:
@@ -103,7 +170,7 @@ def makefile_recipe(target: str) -> list[str]:
     start = lines.index(f"{target}:")
     recipe: list[str] = []
     for line in lines[start + 1 :]:
-        if not line.startswith("	"):
+        if not line.startswith("\t"):
             break
         text = line.strip()
         for key, value in variables.items():
@@ -121,31 +188,40 @@ def test_services_volumes_and_name() -> None:
     assert all(not options for options in data["volumes"].values())
 
 
-def test_restart_policies() -> None:
-    for name, service in services("compose.yaml").items():
+def test_overrides_only_add_ports_and_volumes() -> None:
+    for stack in STACKS:
+        assert set(merged(stack)) == SERVICES
+
+
+@pytest.mark.parametrize("stack", STACKS)
+def test_restart_policies(stack: str) -> None:
+    for name, service in merged(stack).items():
         assert service["restart"] == "always", name
 
 
-def test_memory_limits() -> None:
-    found = services("compose.yaml")
+@pytest.mark.parametrize("stack", STACKS)
+def test_memory_limits(stack: str) -> None:
+    found = merged(stack)
     for name, limit in MEM_LIMITS_MIB.items():
         assert found[name]["mem_limit"] == f"{limit}m"
         assert found[name]["memswap_limit"] == found[name]["mem_limit"]
     assert sum(mib(s["mem_limit"]) for s in found.values()) <= TOTAL_LIMIT_MIB
 
 
-def test_healthchecks() -> None:
-    check = services("compose.yaml")["postgres"]["healthcheck"]
+@pytest.mark.parametrize("stack", STACKS)
+def test_healthchecks(stack: str) -> None:
+    check = merged(stack)["postgres"]["healthcheck"]
     assert set(check) == HEALTH_KEYS
     assert check["test"][:2] == ["CMD", "pg_isready"]
     assert check["test"][check["test"].index("-h") + 1] == "127.0.0.1"
     assert check["start_period"] == "60s"
 
 
-def test_postgres_settings_fit_limit() -> None:
-    settings = pg_settings()
+@pytest.mark.parametrize("stack", STACKS)
+def test_postgres_settings_fit_limit(stack: str) -> None:
+    settings = pg_settings(stack)
     assert settings == PG_SETTINGS
-    limit = mib(services("compose.yaml")["postgres"]["mem_limit"])
+    limit = mib(merged(stack)["postgres"]["mem_limit"])
     assert mib(settings["shared_buffers"]) * 4 <= limit
     worst = (
         mib(settings["shared_buffers"])
@@ -174,15 +250,6 @@ def test_role_connection_limits_fit_max_connections() -> None:
     assert sum(limits) <= usable
 
 
-def port_strings(name: str) -> list[tuple[str, str]]:
-    """Return (service, port) pairs for every published port in one file."""
-    return [
-        (service_name, str(port))
-        for service_name, service in services(name).items()
-        for port in service.get("ports", [])
-    ]
-
-
 def test_mounts_are_named_volumes_or_read_only_files() -> None:
     declared = set(load("compose.yaml")["volumes"])
     for name in FILES:
@@ -208,8 +275,9 @@ def test_no_env_file_or_privileges() -> None:
             assert not service.get("privileged", False)
 
 
-def test_logging_and_no_new_privileges() -> None:
-    for service in services("compose.yaml").values():
+@pytest.mark.parametrize("stack", STACKS)
+def test_logging_and_no_new_privileges(stack: str) -> None:
+    for service in merged(stack).values():
         assert service["logging"] == LOGGING
         assert service["security_opt"] == ["no-new-privileges:true"]
 
@@ -223,32 +291,24 @@ def test_base_file_publishes_nothing() -> None:
 def test_interpolated_vars_are_known_and_required() -> None:
     for name in FILES:
         text = (COMPOSE_DIR / name).read_text(encoding="utf-8")
+        assert not BARE_DOLLAR.search(text), name
         for var, tail in VAR_PATTERN.findall(text):
             assert var in EXPECTED_VARS, var
             assert tail.startswith(":?"), (var, tail)
 
 
-def test_image_tags_are_exact() -> None:
-    image = services("compose.yaml")["postgres"]["image"]
-    assert re.match(r"postgres:16\.\d+-bookworm(@sha256:[0-9a-f]{64})?$", image)
-    assert "latest" not in image
+@pytest.mark.parametrize("stack", STACKS)
+def test_images_pinned_by_digest(stack: str) -> None:
+    for name, service in merged(stack).items():
+        assert re.fullmatch(r"postgres:16\.\d+-bookworm@sha256:[0-9a-f]{64}", service["image"]), (
+            name
+        )
+    assert merged(stack)["postgres"]["image"] == POSTGRES_IMAGE
 
 
-def test_pg_hba_rejects_remote_superuser() -> None:
-    path = COMPOSE_DIR / "postgres" / "pg_hba.conf"
-    lines = [
-        line.split()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
-    methods = {line[-1] for line in lines}
-    assert not {"trust", "md5", "password"} & methods
-    rejects = [i for i, line in enumerate(lines) if line[0] == "host" and line[-1] == "reject"]
-    allows = [i for i, line in enumerate(lines) if line[0] == "host" and line[-1] != "reject"]
-    assert len(rejects) == 2
-    assert all(lines[i][2] == "postgres" for i in rejects)
-    assert max(rejects) < min(allows)
-    assert lines[0] == ["local", "all", "postgres", "peer"]
+@pytest.mark.parametrize("stack", STACKS)
+def test_pg_hba_rules(stack: str) -> None:
+    assert hba_rules(stack) == HBA_RULES[stack]
 
 
 def test_roles_script() -> None:
@@ -283,6 +343,9 @@ def test_local_ports_on_loopback() -> None:
 
 def test_test_roles_only_local() -> None:
     mount = "20-test-roles.sql"
+    for stack, files in STACKS.items():
+        mounted = any(mount in volume for volume in merged(stack)["postgres"]["volumes"])
+        assert mounted == (files[-1] == "compose.local.yaml"), stack
     for name in FILES:
         mounted = any(
             mount in volume
@@ -322,9 +385,3 @@ def test_make_up_and_down() -> None:
     assert "compose.vpc.yaml" not in makefile
     assert "down" in makefile.split(".PHONY:")[1].splitlines()[0].split()
     assert "$(shell" not in makefile
-
-
-def test_images_pinned_by_digest() -> None:
-    for name, service in services("compose.yaml").items():
-        assert re.search(r"@sha256:[0-9a-f]{64}$", service["image"]), name
-    assert services("compose.yaml")["postgres"]["image"] == POSTGRES_IMAGE

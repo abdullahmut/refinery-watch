@@ -29,10 +29,6 @@ PACKAGES: Final[frozenset[str]] = frozenset(
         "git",
     }
 )
-VALID_URLS: Final[tuple[str, ...]] = (
-    "https://github.com/owner/repo.git",
-    "https://github.com/Owner-1/re.po_x-y.git",
-)
 INTERPOLATION: Final[re.Pattern[str]] = re.compile(r"(?<!\$)\$\{([^}]*)\}")
 
 
@@ -185,13 +181,12 @@ def test_write_files_are_mode_0644_and_include_docker_log_limits(role: str) -> N
     assert daemon == {"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}
 
 
-@pytest.mark.parametrize("url", VALID_URLS)
-def test_valid_repo_url_loads_as_yaml(url: str) -> None:
-    clone = next(
-        c for c in render("app", repo_url=url)["runcmd"] if isinstance(c, list) and "clone" in c
-    )
-    assert clone[-2] == url
-    assert clone[-1] == "/opt/refinery-watch"
+def test_valid_repo_url_loads_as_yaml(valid_repo_urls: tuple[str, ...]) -> None:
+    for url in valid_repo_urls:
+        runcmd = render("app", repo_url=url)["runcmd"]
+        clone = next(c for c in runcmd if isinstance(c, list) and "clone" in c)
+        assert clone[-2] == url
+        assert clone[-1] == "/opt/refinery-watch"
 
 
 @pytest.mark.parametrize("role", ROLES)

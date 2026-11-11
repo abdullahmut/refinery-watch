@@ -8,18 +8,19 @@ import hcl2
 
 TF_DIR: Final[Path] = Path(__file__).resolve().parents[2] / "infra" / "terraform"
 CLOUD_INIT_DIR: Final[Path] = TF_DIR.parent / "cloud-init"
+RUNBOOK: Final[Path] = TF_DIR.parents[1] / "docs" / "runbook.md"
 FIREWALLS: Final[frozenset[str]] = frozenset({"base", "data", "app", "ingest"})
 ROLES: Final[tuple[str, ...]] = ("data", "app", "ingest")
 SSH_PORT_EXPR: Final[str] = "tostring(var.ssh_port)"
 COMMENTS_KEY: Final[str] = "__comments__"
-INTERNET: Final[list[str]] = ["0.0.0.0/0", "::/0"]
+INTERNET: Final[tuple[str, ...]] = ("0.0.0.0/0", "::/0")
 # (protocol, port_range, destinations) for each role's egress.
 EGRESS: Final[set[tuple[str, str, tuple[str, ...]]]] = {
-    ("tcp", "80", tuple(INTERNET)),
-    ("tcp", "443", tuple(INTERNET)),
-    ("tcp", "53", tuple(INTERNET)),
-    ("udp", "53", tuple(INTERNET)),
-    ("udp", "123", tuple(INTERNET)),
+    ("tcp", "80", INTERNET),
+    ("tcp", "443", INTERNET),
+    ("tcp", "53", INTERNET),
+    ("udp", "53", INTERNET),
+    ("udp", "123", INTERNET),
     ("tcp", "1-65535", ("var.vpc_ip_range",)),
     ("udp", "1-65535", ("var.vpc_ip_range",)),
 }
@@ -109,7 +110,7 @@ def ssh_port_default() -> int:
     return port
 
 
-def _as_list(value: Any) -> list[Any]:
+def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
@@ -150,8 +151,15 @@ def variable_regex(variable: str) -> str:
     raise AssertionError(f"no regex validation on {variable}")
 
 
+def condition_of(variable: str, needle: str) -> str:
+    for validation in variables()[variable]["validation"]:
+        if needle in validation["condition"]:
+            return str(validation["condition"])
+    raise AssertionError(f"no validation on {variable} mentions {needle}")
+
+
 def matches(pattern: str, value: str) -> bool:
-    """Whole-string match, like RE2 without the multiline flag."""
+    """Anchors the end the way Terraform's regex() does."""
     return re.match(pattern.replace("$", r"\Z"), value) is not None
 
 
@@ -228,7 +236,7 @@ def test_role_egress_is_exactly_the_allowed_set() -> None:
     for role in ROLES:
         rules = firewalls[role]["outbound_rule"]
         got = {
-            (r["protocol"], r["port_range"], tuple(_as_list(r["destination_addresses"])))
+            (r["protocol"], r["port_range"], tuple(as_list(r["destination_addresses"])))
             for r in rules
         }
         assert got == EGRESS, role
@@ -300,17 +308,10 @@ def test_lock_file_matches_pinned_version() -> None:
     assert any(unwrap(h).startswith("h1:") for h in body["hashes"])
 
 
-def condition_of(variable: str, needle: str) -> str:
-    for validation in variables()[variable]["validation"]:
-        if needle in validation["condition"]:
-            return str(validation["condition"])
-    raise AssertionError(f"no validation on {variable} mentions {needle}")
-
-
-def test_repo_url_validation_rejects_yaml_breaking_values() -> None:
+def test_repo_url_validation_rejects_yaml_breaking_values(valid_repo_urls: tuple[str, ...]) -> None:
     pattern = variable_regex("repo_url")
-    assert matches(pattern, "https://github.com/owner/repo.git")
-    assert matches(pattern, "https://github.com/Owner-1/re.po_x-y.git")
+    for good in valid_repo_urls:
+        assert matches(pattern, good), good
     bad = [
         'https://github.com/o/r".git',
         "https://github.com/o/r'.git",
@@ -396,9 +397,6 @@ def test_vpc_ip_range_is_private_ipv4_between_16_and_24() -> None:
         assert not matches(private, bad), bad
     default = variables()["vpc_ip_range"]["default"]
     assert matches(private, default)
-
-
-RUNBOOK: Final[Path] = TF_DIR.parents[1] / "docs" / "runbook.md"
 
 
 def runbook_paragraphs() -> list[str]:

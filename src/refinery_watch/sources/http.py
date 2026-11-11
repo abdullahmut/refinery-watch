@@ -9,9 +9,10 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Final, Self
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
-from urllib.robotparser import RobotFileParser
 
 import httpx
+
+from refinery_watch.sources.robots import ALLOW_ALL, RobotsRules, parse_robots
 
 UA_TOKEN: Final = "refinery-watch"  # noqa: S105
 TIMEOUT: Final = httpx.Timeout(20.0, pool=5.0)
@@ -114,9 +115,9 @@ class _Reply:
 
 @dataclass(frozen=True, slots=True)
 class _Robots:
-    """Parsed rules for one origin. A parser of None means every path is disallowed."""
+    """Parsed rules for one origin. Rules of None mean every path is disallowed."""
 
-    parser: RobotFileParser | None
+    rules: RobotsRules | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,21 +227,22 @@ class Fetcher:
         rules = self._robots.get(origin)
         if rules is None:
             rules = self._robots[origin] = self._fetch_robots(origin)
-        if rules.parser is None or not rules.parser.can_fetch(UA_TOKEN, url):
+        parts_path = urlsplit(url)
+        target = parts_path.path + (f"?{parts_path.query}" if parts_path.query else "")
+        if rules.rules is None or not rules.rules.allows(target):
             raise RobotsDisallowed("robots_disallowed", url)
 
     def _fetch_robots(self, origin: str) -> _Robots:
         outcome = self._attempts(f"{origin}/robots.txt", (), "text/plain")
         if isinstance(outcome, _Reply) and outcome.status in (200, 404, 410):
-            parser = RobotFileParser()
             if outcome.status == 200:
-                parser.parse(outcome.body.decode("utf-8", errors="replace").splitlines())
+                text = outcome.body.decode("utf-8", errors="replace")
+                rules = parse_robots(text, UA_TOKEN)
             else:
-                parser.parse([])
-            delay = parser.crawl_delay(UA_TOKEN)
-            if delay is not None:
-                self._crawl_delay[(urlsplit(origin).hostname or "").lower()] = float(delay)
-            return _Robots(parser)
+                rules = ALLOW_ALL
+            if rules.crawl_delay is not None:
+                self._crawl_delay[(urlsplit(origin).hostname or "").lower()] = rules.crawl_delay
+            return _Robots(rules)
         return _Robots(None)
 
     def _send(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply:

@@ -129,24 +129,30 @@ def fresh_schema(pg_server: str, app_url: str) -> Iterator[str]:
     drop_schema(pg_server, name)
 
 
+def finish(conn: Conn) -> None:
+    """Fires deferred checks so a test cannot leave a row without its primary source."""
+    try:
+        if conn.info.transaction_status == psycopg.pq.TransactionStatus.INTRANS:
+            conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 @pytest.fixture
 def db(session_schema: str, pg_server: str) -> Iterator[Conn]:
     """Owner connection inside a transaction that is rolled back."""
     conn = open_in_schema(pg_server, session_schema)
-    conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
     yield conn
-    conn.rollback()
-    conn.close()
+    finish(conn)
 
 
 @pytest.fixture
 def app_db(session_schema: str, app_url: str) -> Iterator[Conn]:
     """App-role connection inside a transaction that is rolled back."""
     conn = open_in_schema(app_url, session_schema)
-    conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
     yield conn
-    conn.rollback()
-    conn.close()
+    finish(conn)
 
 
 ALL_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")

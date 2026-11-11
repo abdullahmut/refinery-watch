@@ -93,9 +93,8 @@ def test_cutoff_covers_a_corroboration_still_uncommitted(seeded_schema: str, app
         writer.commit()
         thread.join(timeout=5)
         query = "SELECT count(*) AS n FROM event_source WHERE known_at <= %s"
-        before = reader.execute(query, (result[0],)).fetchone()
-        after = reader.execute(query, (result[0],)).fetchone()
-        assert before == after == {"n": 2}
+        at_cutoff = reader.execute(query, (result[0],)).fetchone()
+        assert at_cutoff == {"n": 2}
     finally:
         for conn in (setup, writer, reader, watcher):
             conn.close()

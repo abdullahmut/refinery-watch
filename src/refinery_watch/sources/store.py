@@ -2,7 +2,8 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Final, Literal
 
 import psycopg
@@ -246,3 +247,38 @@ def finish_run(conn: Conn, run_id: int, outcome: RunOutcome) -> None:
         (outcome.status, outcome.rows_in, outcome.rows_out, note, run_id),
     )
     conn.commit()
+
+
+@dataclass(frozen=True, slots=True)
+class PriceRow:
+    series: str
+    observed_on: date
+    value: Decimal
+    unit: str
+
+
+PRICE_SCALE: Final = Decimal("0.0001")
+
+
+def write_prices(
+    conn: Conn, rows: Sequence[PriceRow], source_id: str, raw_document_id: int | None
+) -> int:
+    """Inserts rows that are new or differ from the latest known value. Never updates."""
+    inserted = 0
+    for row in rows:
+        value = row.value.quantize(PRICE_SCALE)
+        latest = conn.execute(
+            "SELECT value FROM price WHERE series = %s AND observed_on = %s"
+            " ORDER BY known_at DESC LIMIT 1",
+            (row.series, row.observed_on),
+        ).fetchone()
+        if latest is not None and Decimal(latest["value"]) == value:
+            continue
+        conn.execute(
+            "INSERT INTO price (series, observed_on, value, unit, source_id, raw_document_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s)",
+            (row.series, row.observed_on, value, row.unit, source_id, raw_document_id),
+        )
+        inserted += 1
+    conn.commit()
+    return inserted

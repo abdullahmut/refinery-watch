@@ -65,4 +65,5 @@ Postgres is the only database. MinIO holds raw documents at
 - Open for the `outage_event` schema spec. A `supersedes` column on the new row points at the row
   it replaces. UPDATE and DELETE are revoked at the database level. Current rows are those no later
   row supersedes. `docs/definitions.md` now describes restarts and revisions as new rows, with
-  open and closed state derived at query time.
+  open and closed state derived at query time from an `ends_event` column set on each `restart`
+  row when it is written.

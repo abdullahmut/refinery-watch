@@ -95,7 +95,8 @@ id. If no row qualifies, the restart is not written to `outage_event`. It goes t
 
 Matching happens once, at write time. It never runs again at query time, so a later event cannot
 take an earlier restart. A restart reported late still ends the event it follows, not one that
-started after the unit came back.
+started after the unit came back. This assumes two outages on one unit may both be open; open
+decision 6 may change the outcome.
 
 An event is closed as of T if a `restart` row current as of T has `ends_event` pointing at the
 event's row or at any row in its `supersedes` chain. Otherwise it is open. A revision written after
@@ -104,7 +105,8 @@ the restart is in the same chain, so the event stays closed.
 Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event` set to
 E1. The CDU goes down again on 20 Nov (E2). As of 21 Nov, E1 is closed and E2 is open. If instead
 X1 were first reported on 25 Nov with the unit back on 10 Nov, it would still end E1, because E2
-started after 10 Nov.
+started after 10 Nov. That case assumes E1 and E2 are both open from 20 to 25 Nov. Under open
+decision 6 they may not be, and X1 may go to review instead.
 
 ## Revisions
 

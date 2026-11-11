@@ -65,7 +65,8 @@ nc -vz -w 5 <public ip> <ssh_port>
 
 The first connection trusts the host key on first use. To check it, open the Recovery Console
 and compare `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` with the fingerprint ssh prints.
-Opening the console resets the root password and power-cycles the box. See the second entry.
+Opening the console resets the root password and power-cycles the box. The steps are under "SSH
+unreachable after first boot".
 
 Then on each Droplet:
 

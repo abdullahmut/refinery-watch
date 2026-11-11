@@ -61,7 +61,7 @@ Postgres is the only database. MinIO holds raw documents at
 - Where the second backup copy lives: undecided. It must be off the data Droplet to survive losing
   it.
 - Where Terraform state lives: undecided.
-- The five open decisions listed in [docs/definitions.md](definitions.md): undecided.
+- The seven open decisions listed in [docs/definitions.md](definitions.md): undecided.
 - Open for the `outage_event` schema spec. A `supersedes` column on the new row points at the row
   it replaces. UPDATE and DELETE are revoked at the database level. Current rows are those no later
   row supersedes. `docs/definitions.md` now describes restarts and revisions as new rows, with

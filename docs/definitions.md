@@ -73,6 +73,9 @@ a 200 kb/d CDU is 80 kb/d affected.
 
 ## Restarts
 
+These rules are provisional. They are settled in the `outage_event` schema spec, where they are
+tested against a seeded database.
+
 A `restart` row is a new row. It never writes to the event it ends. On a `restart` row,
 `start_date` is the date the unit came back. If that date is not known, the restart goes to
 review. The row carries `ends_event`, a new column: the id of the event row it ends.
@@ -138,6 +141,9 @@ as capacity offline, until a news or company source confirms a throughput effect
 
 ## Dedupe
 
+These rules are provisional. They are settled in the `outage_event` schema spec, where they are
+tested against a seeded database.
+
 Two extractions are the same event when they are in the same family, the refinery matches, the
 unit matches (or one is null), and start dates are within 3 days. There are two families:
 outages (`unplanned` and `planned`) and restarts (`restart`). A shutdown and its own restart are
@@ -159,8 +165,8 @@ Do not add regions without a decision record.
 
 ## Open decisions
 
-Decisions 1 to 4 were found while labelling the first golden set; decision 5 came from review of
-the restart rules. Each needs a decision record before the rule is coded.
+Decisions 1 to 4 were found while labelling the first golden set; decisions 5 to 7 came from
+review of the restart and dedupe rules. Each needs a decision record before the rule is coded.
 
 1. **Old starts mentioned in passing.** The 90-day window rejects a March outage described in a
    July article. Options: keep strict and lose it; allow with `confidence = low` and a flag; widen
@@ -180,3 +186,12 @@ the restart rules. Each needs a decision record before the rule is coded.
    unit restart never ends a whole-plant outage. Options: keep this; write one `restart` row per
    open unit; let a whole-plant restart close every open event at that refinery, which needs a
    different column than a single `ends_event`.
+6. **Two open outages on one unit.** A new outage on a unit that already has an open outage leaves
+   both open. The unit counts offline twice, and the first outage may never close. Intended rule:
+   a unit has at most one open outage at a time. A new shutdown on a unit with an open outage
+   either supersedes it or goes to review, never both open. The schema enforces this with a
+   constraint, not only in code.
+7. **Dedupe across a restart.** The 3-day window ignores a restart in between. Restarts of two
+   different outages merge, and a re-trip after a restart merges back into the first outage.
+   Intended rule: dedupe never merges two rows with a restart between them, and restarts dedupe
+   only by the event they end.

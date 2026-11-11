@@ -348,3 +348,43 @@ def test_vpc_ip_range_is_private_ipv4_between_16_and_24() -> None:
         assert not matches(private, bad), bad
     default = variables()["vpc_ip_range"]["default"]
     assert matches(private, default)
+
+
+RUNBOOK: Final[Path] = TF_DIR.parents[1] / "docs" / "runbook.md"
+
+
+def runbook_paragraphs() -> list[str]:
+    text = RUNBOOK.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return [" ".join(p.split()) for p in text.split("\n\n")]
+
+
+def vars_in(text: str) -> set[str]:
+    return set(re.findall(r"\bvar\.([a-z_]+)", text))
+
+
+def test_runbook_warns_about_variables_in_firewall_and_ignored_user_data() -> None:
+    firewall_text = (TF_DIR / "firewall.tf").read_text(encoding="utf-8")
+    user_data = resources("digitalocean_droplet")["node"]["user_data"]
+    shared = vars_in(firewall_text) & vars_in(user_data)
+    assert shared, "expected at least ssh_port"
+    paragraphs = runbook_paragraphs()
+    for name in shared:
+        assert any(f"`{name}`" in p and "`-replace`" in p for p in paragraphs), name
+
+
+def test_runbook_warns_that_vpc_range_change_replaces_droplets() -> None:
+    assert any(
+        "`vpc_ip_range`" in p and "replaces all three Droplets" in p for p in runbook_paragraphs()
+    )
+
+
+def test_runbook_imports_ssh_key_by_numeric_id() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    assert "doctl compute ssh-key list" in text
+    assert "terraform import digitalocean_ssh_key.operator <numeric key id>" in text
+    assert "<fingerprint>" not in text
+
+
+def test_runbook_looks_up_ipv4_address_with_curl_4() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    assert "curl -4 -s https://ifconfig.me" in text

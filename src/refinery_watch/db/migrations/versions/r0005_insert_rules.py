@@ -42,8 +42,10 @@ BEGIN
     RAISE EXCEPTION 'chain_id is set by the database' USING ERRCODE = 'RW014';
   END IF;
 
-  -- 3b: a restart cannot be dated after the day it became known (UTC)
-  IF NEW.event_type = 'restart' AND NEW.start_date > (NEW.known_at AT TIME ZONE 'UTC')::date THEN
+  -- 3b: a restart cannot be dated after the day it became known. One day of slack covers a
+  -- source in any UTC+ zone, whose local date runs ahead of the UTC date.
+  IF NEW.event_type = 'restart'
+     AND NEW.start_date > (NEW.known_at AT TIME ZONE 'UTC')::date + 1 THEN
     RAISE EXCEPTION 'restart date % is after the day it became known', NEW.start_date
       USING ERRCODE = 'RW015';
   END IF;

@@ -248,3 +248,17 @@ def test_rw015_applies_to_restart_revisions(db: Conn) -> None:
 
 def test_outage_dated_in_the_future_is_still_a_planned_turnaround(db: Conn) -> None:
     write(db, known_at=ts(1), event_type="planned", start_date=day(28))
+
+
+def test_restart_from_an_asia_morning_is_not_in_the_future(db: Conn) -> None:
+    """07:30 SGT on 13 Nov is 23:30 UTC on 12 Nov. The article says back today."""
+    write(db, known_at=ts(1))
+    known = datetime(2025, 11, 12, 23, 30, tzinfo=UTC)
+    write_restart(db, known_at=known, start_date=day(13))
+    assert current_ids(db, ts(14)) == []
+
+
+def test_rw015_two_days_ahead_is_still_future(db: Conn) -> None:
+    write(db, known_at=ts(1))
+    known = datetime(2025, 11, 12, 23, 30, tzinfo=UTC)
+    refused(db, "RW015", restart=True, known_at=known, start_date=day(14))

@@ -28,6 +28,10 @@ PACKAGES: Final[frozenset[str]] = frozenset(
         "git",
     }
 )
+VALID_URLS: Final[tuple[str, ...]] = (
+    "https://github.com/owner/repo.git",
+    "https://github.com/Owner-1/re.po_x-y.git",
+)
 INTERPOLATION: Final[re.Pattern[str]] = re.compile(r"(?<!\$)\$\{([^}]*)\}")
 
 
@@ -35,32 +39,42 @@ def read_template(role: str) -> str:
     return (CLOUD_INIT_DIR / f"{role}.yaml.tftpl").read_text(encoding="utf-8")
 
 
-def render_text(role: str) -> str:
-    text = INTERPOLATION.sub(lambda m: SAMPLE[m.group(1)], read_template(role))
+def render_text(role: str, **overrides: str) -> str:
+    values = {**SAMPLE, **overrides}
+    text = INTERPOLATION.sub(lambda m: values[m.group(1)], read_template(role))
     return text.replace("$${", "${")
 
 
-def render(role: str) -> dict[str, Any]:
-    loaded = yaml.safe_load(render_text(role))
+def render(role: str, **overrides: str) -> dict[str, Any]:
+    loaded = yaml.safe_load(render_text(role, **overrides))
     assert isinstance(loaded, dict)
     return loaded
 
 
+def write_files(role: str) -> dict[str, dict[str, Any]]:
+    """write_files entries by path. Every entry must be mode 0644."""
+    entries = {e["path"]: e for e in render(role)["write_files"]}
+    for entry in entries.values():
+        assert entry["permissions"] == "0644", entry["path"]
+    return entries
+
+
 def written_file(role: str, path: str) -> str:
-    for entry in render(role)["write_files"]:
-        if entry["path"] == path:
-            assert entry["permissions"] == "0644"
-            return str(entry["content"])
-    raise AssertionError(f"{path} not written")
+    return str(write_files(role)[path]["content"])
 
 
-def runcmd_index(role: str, word: str) -> int:
-    """Index of the first runcmd entry that holds `word` as an item or inside an item."""
+def sshd_gate(role: str) -> str:
+    """The shell script of the first runcmd entry, which moves sshd."""
+    first = render(role)["runcmd"][0]
+    assert first[:2] == ["sh", "-c"]
+    return str(first[2])
+
+
+def clone_index(role: str) -> int:
     for i, cmd in enumerate(render(role)["runcmd"]):
-        parts = cmd if isinstance(cmd, list) else [cmd]
-        if any(word in part for part in parts):
+        if isinstance(cmd, list) and "clone" in cmd:
             return i
-    raise AssertionError(f"{word} not in runcmd")
+    raise AssertionError("no clone in runcmd")
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -103,10 +117,10 @@ def test_required_packages(role: str) -> None:
 
 @pytest.mark.parametrize("role", ROLES)
 def test_sshd_dropin_sets_port_and_sorts_first(role: str) -> None:
-    path = "/etc/ssh/sshd_config.d/10-refinery-watch.conf"
-    lines = written_file(role, path).splitlines()
-    assert Path(path).name < "50-cloud-init.conf"
-    assert lines == [
+    dropins = [p for p in write_files(role) if p.startswith("/etc/ssh/sshd_config.d/")]
+    assert len(dropins) == 1
+    assert Path(dropins[0]).name < "50-cloud-init.conf"
+    assert written_file(role, dropins[0]).splitlines() == [
         "Port 2345",
         "PasswordAuthentication no",
         "KbdInteractiveAuthentication no",
@@ -138,13 +152,43 @@ def test_unattended_upgrades_enabled(role: str) -> None:
 
 
 @pytest.mark.parametrize("role", ROLES)
-def test_sshd_restart_runs_before_clone(role: str) -> None:
-    runcmd = render(role)["runcmd"]
-    assert runcmd[0] == ["sshd", "-t"]
-    assert runcmd[1] == ["systemctl", "daemon-reload"]
-    restart = runcmd_index(role, "ssh.socket")
-    assert restart == runcmd_index(role, "ssh.service")
-    assert 1 < restart < runcmd_index(role, "clone")
+def test_sshd_check_gates_port_move(role: str) -> None:
+    script = sshd_gate(role)
+    assert script.startswith("set -e;")
+    assert "||" not in script
+    steps = ["sshd -t", "systemctl daemon-reload", "restart ssh.socket", "restart ssh.service"]
+    positions = [script.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert clone_index(role) > 0
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_socket_branch_restarts_socket(role: str) -> None:
+    script = sshd_gate(role)
+    assert (
+        "if systemctl is-enabled --quiet ssh.socket; "
+        "then systemctl restart ssh.socket; "
+        "else systemctl restart ssh.service; fi"
+    ) in script
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_deploy_user_has_passwordless_sudo(role: str) -> None:
+    assert render(role)["users"][0]["sudo"] == "ALL=(ALL) NOPASSWD:ALL"
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_write_files_are_mode_0644_and_include_docker_log_limits(role: str) -> None:
+    assert set(write_files(role)) >= {"/etc/docker/daemon.json"}
+
+
+@pytest.mark.parametrize("url", VALID_URLS)
+def test_valid_repo_url_loads_as_yaml(url: str) -> None:
+    clone = next(
+        c for c in render("app", repo_url=url)["runcmd"] if isinstance(c, list) and "clone" in c
+    )
+    assert clone[-2] == url
+    assert clone[-1] == "/opt/refinery-watch"
 
 
 @pytest.mark.parametrize("role", ROLES)

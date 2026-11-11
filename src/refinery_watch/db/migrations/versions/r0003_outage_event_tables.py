@@ -104,17 +104,8 @@ STATEMENTS = [
     """,
     """
     CREATE FUNCTION event_source_before_insert() RETURNS trigger LANGUAGE plpgsql AS $$
-    DECLARE
-      event_known timestamptz;
     BEGIN
-      IF NEW.known_at IS NULL THEN
-        NEW.known_at := clock_timestamp();
-      END IF;
-      SELECT known_at INTO event_known FROM outage_event WHERE id = NEW.outage_event_id;
-      IF event_known IS NOT NULL AND NEW.known_at < event_known THEN
-        RAISE EXCEPTION 'event_source.known_at % is before outage_event.known_at %',
-          NEW.known_at, event_known USING ERRCODE = 'RW002';
-      END IF;
+      NEW.known_at := clock_timestamp();
       RETURN NEW;
     END
     $$

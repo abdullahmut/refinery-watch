@@ -111,10 +111,8 @@ def current_ids(conn: Conn, as_of: datetime) -> list[int]:
 
 
 def sourced(conn: Conn, event_id: int) -> int:
-    """Gives a raw row its primary source, known when the row was. Returns the row id."""
-    known = conn.execute("SELECT known_at FROM outage_event WHERE id = %s", (event_id,)).fetchone()
-    assert known is not None
-    add_source(conn, event_id, add_document(conn, event_id), known_at=known["known_at"])
+    """Gives a row its primary source. Returns the row id."""
+    add_source(conn, event_id, add_document(conn, event_id))
     return event_id
 
 

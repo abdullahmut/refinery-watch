@@ -68,10 +68,11 @@ def test_write_returns_ids_and_stores_the_primary_source(app_db: Conn) -> None:
     assert written.chain_id == written.id
     assert written.ends_event_id is None
     found = app_db.execute(
-        "SELECT role, source_kind, known_at FROM event_source WHERE outage_event_id = %s",
-        (written.id,),
+        "SELECT role, source_kind, known_at >= %s AS after_event FROM event_source"
+        " WHERE outage_event_id = %s",
+        (ts(1), written.id),
     ).fetchone()
-    assert found == {"role": "primary", "source_kind": "company_statement", "known_at": ts(1)}
+    assert found == {"role": "primary", "source_kind": "company_statement", "after_event": True}
 
 
 def test_restart_gets_ends_event_id_and_revision_gets_chain_id(app_db: Conn) -> None:

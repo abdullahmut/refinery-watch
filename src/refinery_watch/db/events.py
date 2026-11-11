@@ -135,12 +135,11 @@ def review_from(exc: psycopg.Error) -> Review | None:
     return None
 
 
-def insert_source(
-    conn: Conn, outage_event_id: int, source: SourceLink, role: str, known_at: datetime | None
-) -> int:
+def insert_source(conn: Conn, outage_event_id: int, source: SourceLink, role: str) -> int:
+    """Inserts an event_source row. The database sets known_at."""
     cursor = conn.execute(
         "INSERT INTO event_source (outage_event_id, raw_document_id, extraction_id, role,"
-        " source_kind, evidence, known_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " source_kind, evidence) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
         (
             outage_event_id,
             source.raw_document_id,
@@ -148,7 +147,6 @@ def insert_source(
             role,
             source.source_kind,
             source.evidence,
-            known_at,
         ),
     )
     found = require_row(cursor.fetchone())
@@ -177,7 +175,7 @@ def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | R
     try:
         with conn.transaction():
             written = insert_event(conn, row)
-            insert_source(conn, written.id, source, "primary", row.known_at)
+            insert_source(conn, written.id, source, "primary")
     except psycopg.Error as exc:
         review = review_from(exc)
         if review is None:
@@ -187,7 +185,7 @@ def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | R
 
 
 def add_corroboration(conn: Conn, outage_event_id: int, source: SourceLink) -> int:
-    return insert_source(conn, outage_event_id, source, "corroboration", None)
+    return insert_source(conn, outage_event_id, source, "corroboration")
 
 
 def outage_as_of(conn: Conn, as_of: datetime) -> list[OutageRow]:

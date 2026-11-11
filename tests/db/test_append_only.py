@@ -86,12 +86,16 @@ def test_same_document_twice_is_refused(db: Conn) -> None:
         add_source(db, event, add_document(db, 1), role="corroboration")
 
 
-def test_source_known_at_before_its_event_fails(db: Conn) -> None:
+def test_backdated_source_known_at_cannot_land(db: Conn) -> None:
     event = insert_outage(db, known_at=ts(5))
-    with pytest.raises(psycopg.Error) as info, db.transaction():
-        add_source(db, event, add_document(db), known_at=ts(4))
-    assert sqlstate(info) == "RW002"
-    add_source(db, event, add_document(db), known_at=ts(5))
+    first = add_source(db, event, add_document(db, 1), known_at=ts(2))
+    second = add_source(db, event, add_document(db, 2), role="corroboration", known_at=ts(5, 7))
+    rows = db.execute(
+        "SELECT known_at > now() - interval '1 minute' AS recent FROM event_source"
+        " WHERE id = ANY(%s)",
+        ([first, second],),
+    ).fetchall()
+    assert rows == [{"recent": True}, {"recent": True}]
 
 
 def test_source_known_at_defaults_to_clock(db: Conn) -> None:

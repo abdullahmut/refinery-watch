@@ -29,13 +29,13 @@ down:
 	$(COMPOSE_LOCAL) down
 
 deploy:
-	echo "deploy: not built. infra/ does not exist yet. Operator runs this by hand." >&2
+	echo "deploy: not built. Operator runs this by hand." >&2
 	exit 1
 
 backup:
-	echo "backup: not built. infra/ does not exist yet. Operator runs this by hand." >&2
+	echo "backup: not built. Operator runs this by hand." >&2
 	exit 1
 
 restore:
-	echo "restore: not built. infra/ does not exist yet. Operator runs this by hand." >&2
+	echo "restore: not built. Operator runs this by hand." >&2
 	exit 1

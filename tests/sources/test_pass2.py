@@ -264,3 +264,18 @@ def test_bidi_controls_are_stripped() -> None:
     marks = [0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)]
     text = "a" + "".join(chr(c) for c in marks) + "b"
     assert clean_text(text) == "a b"
+
+
+def test_resolve_family_flag_is_belt_and_braces(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[int] = []
+
+    def fake(host: str, port: object, family: int = 0, *a: object, **k: object) -> list[object]:
+        seen.append(family)
+        return [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", (V6, 0, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (V4, 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    assert resolve_host("a.example.com") == [V4]
+    assert seen == [socket.AF_INET]

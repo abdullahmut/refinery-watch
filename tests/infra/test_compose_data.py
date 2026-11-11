@@ -74,6 +74,24 @@ def pg_settings() -> dict[str, str]:
     return found
 
 
+def makefile_recipe(target: str) -> list[str]:
+    """Return the recipe lines of one Makefile target, with variables expanded."""
+    lines = (ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
+    variables = {
+        m.group(1): m.group(2) for line in lines if (m := re.match(r"(\w+) := (.*)", line))
+    }
+    start = lines.index(f"{target}:")
+    recipe: list[str] = []
+    for line in lines[start + 1 :]:
+        if not line.startswith("	"):
+            break
+        text = line.strip()
+        for key, value in variables.items():
+            text = text.replace(f"$({key})", value)
+        recipe.append(text)
+    return recipe
+
+
 def test_services_volumes_and_name() -> None:
     data = load("compose.yaml")
     assert data["name"] == "refinery-watch-data"
@@ -241,3 +259,29 @@ def test_test_roles_only_local() -> None:
         ("refinery_watch_test", "refinery_test_owner")
     ]
     assert "SUPERUSER" not in text
+
+
+def test_make_up_and_down() -> None:
+    up = makefile_recipe("up")
+    down = makefile_recipe("down")
+    assert up[0].startswith("[ -f .env ] ||")
+    assert up[1].startswith("docker info ")
+    assert up[2].startswith("docker compose ")
+    assert len(up) == 3
+    assert (
+        'echo "up: .env not found at the repo root. '
+        'Copy .env.example to .env and fill it in." >&2' in up[0]
+    )
+    assert (
+        'echo "up: Docker is not running. Start Docker Desktop, then run make up again." >&2'
+        in up[1]
+    )
+    assert "up -d --wait --wait-timeout 180" in up[2]
+    assert down[0].startswith("docker info ")
+    assert 'echo "down: Docker is not running. Nothing to stop." >&2' in down[0]
+    assert down[1].endswith("compose.local.yaml down")
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert not re.search(r"(^|\s)(-v|--volumes)(\s|$)", " ".join(down))
+    assert "compose.vpc.yaml" not in makefile
+    assert "down" in makefile.split(".PHONY:")[1].splitlines()[0].split()
+    assert "$(shell" not in makefile

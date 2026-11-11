@@ -10,9 +10,11 @@ Symptom: no Droplets exist, or the stack was destroyed and must be rebuilt.
 Likely cause: first setup, or a deliberate destroy and apply.
 
 Create the API token in the DigitalOcean control panel as a custom-scope token with an expiry of 30
-to 90 days. Grant create, read, update and delete on droplet, vpc, firewall, tag and ssh_key, and
-read on image, region, size and actions. Check the list against the token screen, which shows the
-exact scope names. Grant nothing else, and do not use a full-access token.
+to 90 days. Grant these scopes: `droplet:create/read/update/delete`,
+`vpc:create/read/update/delete`, `firewall:create/read/update/delete`,
+`ssh_key:create/read/update/delete`, `tag:create/read/delete`, `image:read`, `regions:read`,
+`sizes:read` and `actions:read`. Check the list against the token screen. Grant nothing else, and
+do not use a full-access token.
 
 Create `infra/terraform/terraform.tfvars` with these keys. The file is ignored by git and refused
 by the pre-commit hook. Never put the API token in it. Until `example.tfvars` exists, use this
@@ -22,10 +24,11 @@ template:
 ssh_public_key       = "ssh-ed25519 AAAAREPLACEWITHYOURPUBLICKEY operator@laptop"
 ssh_source_addresses = ["203.0.113.10/32"]
 repo_url             = "https://github.com/OWNER/refinery-watch.git"
-repo_ref             = "v0.0.0"
+repo_ref             = "main"
 ```
 
-Set `repo_ref` to a release tag before any deploy. A branch name moves under you. Checking tag
+The template uses `main` because no tag exists yet. Set `repo_ref` to a release tag before any
+deploy. A branch name moves under you. Checking tag
 signatures is the deploy spec's job, not this runbook's. Use `0.0.0.0/0` in
 `ssh_source_addresses` only with `allow_ssh_from_anywhere = true`.
 
@@ -60,9 +63,9 @@ several minutes. Poll the port until it answers:
 nc -vz -w 5 <public ip> <ssh_port>
 ```
 
-Before the first login, compare the host key. In the DigitalOcean Recovery Console (see the second
-entry for how to get in), run `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`. The fingerprint
-that ssh prints on first connect must match.
+On first connect, accept the host key only from an address in `ssh_source_addresses`, then run
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` over that session and keep the fingerprint in
+your known_hosts. Compare against the Recovery Console only if you are already in it for a repair.
 
 Then on each Droplet:
 
@@ -98,6 +101,9 @@ reach only new Droplets.
 Changing `ssh_port` moves the firewall on running Droplets at once. Change it only together with
 `-replace` on every Droplet, or move sshd by hand first. If the firewall moves first, sshd is still
 on the old port and every box is unreachable. Use the Recovery Console entry below to recover.
+
+Changing a size in `droplet_sizes` resizes the box in place and powers it off. Do it in a quiet
+window, and stop the Compose stack on the box first.
 
 Changing `vpc_ip_range` replaces the VPC, so it replaces all three Droplets, including the data
 disk. Do not change it once the data box holds data.
@@ -156,8 +162,8 @@ grep ssh_source_addresses infra/terraform/terraform.tfvars
 If the address is missing, add it to `terraform.tfvars` and run `terraform apply`. Firewall rules
 change in place and no Droplet is touched.
 
-For causes 2 and 3, use the DigitalOcean control panel. The account has no root password, so there
-are two ways in.
+For causes 2 and 3, use the DigitalOcean control panel. Root has no password, so there are
+two ways in.
 
 With a password reset: open the Droplet, choose Access, then Reset root password, then Launch
 Recovery Console. The reset power-cycles the box. If the data Droplet is involved, stop the Compose

@@ -54,7 +54,13 @@ def outage_columns(conn: Conn, **over: Any) -> dict[str, Any]:
 
 
 def insert_raw_outage(conn: Conn, **over: Any) -> int:
-    """Inserts one outage_event row with explicit id and chain_id. Returns its id."""
+    """Inserts a row with explicit id and chain_id, past the insert trigger. Owner only."""
+    state = conn.execute(
+        "SELECT tgenabled FROM pg_trigger"
+        " WHERE tgrelid = 'outage_event'::regclass AND tgname = 'outage_event_before_insert'"
+    ).fetchone()
+    if state is not None and state["tgenabled"] != "D":
+        conn.execute("ALTER TABLE outage_event DISABLE TRIGGER outage_event_before_insert")
     row = outage_columns(conn, **over)
     new_id = conn.execute(
         "SELECT coalesce(max(id), 8999999) + 1 AS id FROM outage_event"
@@ -107,3 +113,34 @@ def sourced(conn: Conn, event_id: int) -> int:
     assert known is not None
     add_source(conn, event_id, add_document(conn, event_id), known_at=known["known_at"])
     return event_id
+
+
+def insert_outage(conn: Conn, **over: Any) -> int:
+    """Inserts a row through the insert trigger. Returns its id."""
+    row = outage_columns(conn, **over)
+    cols = ", ".join(row)
+    marks = ", ".join(f"%({k})s" for k in row)
+    found = conn.execute(
+        f"INSERT INTO outage_event ({cols}) VALUES ({marks}) RETURNING id", row
+    ).fetchone()
+    assert found is not None
+    return int(found["id"])
+
+
+def insert_restart(conn: Conn, **over: Any) -> int:
+    fields: dict[str, Any] = {
+        "event_type": "restart",
+        "capacity_basis": "not_stated",
+        "capacity_affected_kbd": None,
+    }
+    fields.update(over)
+    return insert_outage(conn, **fields)
+
+
+def write(conn: Conn, **over: Any) -> int:
+    """An outage row through the trigger, with its primary source."""
+    return sourced(conn, insert_outage(conn, **over))
+
+
+def write_restart(conn: Conn, **over: Any) -> int:
+    return sourced(conn, insert_restart(conn, **over))

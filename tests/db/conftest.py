@@ -8,8 +8,9 @@ from urllib.parse import urlparse
 
 import psycopg
 import pytest
+from psycopg.rows import dict_row
 
-from refinery_watch.db.connect import Conn, connect
+from refinery_watch.db.connect import Conn
 from refinery_watch.db.migrate import upgrade
 from refinery_watch.db.seed import load_refineries, load_sources
 
@@ -81,9 +82,13 @@ def drop_schema(owner: str, name: str) -> None:
 
 
 def open_in_schema(url: str, schema: str) -> Conn:
-    conn = connect(url)
-    conn.execute(f"SET search_path TO {schema}")
-    return conn
+    return psycopg.connect(
+        url,
+        row_factory=dict_row,
+        autocommit=False,
+        application_name="refinery-watch",
+        options=f"-c search_path={schema}",
+    )
 
 
 def seed_schema(owner: str, schema: str) -> None:

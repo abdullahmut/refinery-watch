@@ -151,8 +151,14 @@ RunStatus = Literal["ok", "failed", "skipped"]
 INTERVAL_FACTOR: Final = 0.9
 RUN_BUDGET: Final = timedelta(minutes=20)
 NOTE_MAX_CHARS: Final = 1000
-CLEAR_STATUSES: Final = frozenset({"open", "api_key_required"})
-CLEAR_PREFIX: Final = "allowed"
+CLEAR_STATUSES: Final = frozenset(
+    {
+        "open",
+        "api_key_required",
+        "allowed_for_reference_use_ai_training_disallowed",
+        "allowed_except_cms_paths",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +195,7 @@ def job_name(source_id: str) -> str:
 
 def robots_cleared(status: str) -> bool:
     """True only for a stated allow. Unchecked, refused and unknown statuses are not."""
-    return status in CLEAR_STATUSES or status.startswith(CLEAR_PREFIX)
+    return status in CLEAR_STATUSES
 
 
 def source_row(conn: Conn, source_id: str) -> SourceRow:

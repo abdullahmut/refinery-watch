@@ -34,7 +34,11 @@ Feed XML is parsed with `defusedxml`. HTML becomes text with the standard librar
 
 The Hydrocarbon Processing robots.txt allows reference use and disallows AI training. We send
 article text to a model only to pull out outage facts for a refined products desk. Nothing is
-trained on it. If the publisher objects or the file changes, the adapter stops.
+trained on it. A source runs only when its `robots_status` in the source list is one of a short
+set of stated allows. The fetcher also reads each host's live robots.txt at the start of every
+run and skips any path it disallows. The code does not watch robots.txt for changes between runs
+or compare it with an earlier copy. If the publisher objects or its policy changes, the operator
+edits the status in the source list and reloads it, and the source stops.
 
 ## Consequences
 

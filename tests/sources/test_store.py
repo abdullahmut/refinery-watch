@@ -69,6 +69,10 @@ def test_clear_statuses_pass(status: str) -> None:
         "",
         "n/a",
         "OPEN",
+        "allowed",
+        "allowed_for_everything",
+        "allowed_except_cms_paths ",
+        "open_but_blocks_bots",
     ],
 )
 def test_unclear_statuses_are_refused(status: str) -> None:

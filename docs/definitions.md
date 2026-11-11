@@ -49,19 +49,23 @@ a 200 kb/d CDU is 80 kb/d affected.
 - Weekday names resolve against the publication date: "Tuesday" in an article published on a
   Thursday is the Tuesday two days before. "Next Tuesday" is the one after. "Mid-October" is the
   15th; "early" and "late" are null.
-- A restart that is announced ("plans to restart on Wednesday") is not a `restart` row. It updates
-  `expected_restart_date` on the open event. The `restart` row is written only when a source says
-  the unit is back.
+- A restart that is announced ("plans to restart on Wednesday") is not a `restart` row. It is a
+  revision: a new row that supersedes the open event and carries the new
+  `expected_restart_date`. The `restart` row is written only when a source says the unit is back.
 - Dates must fall within 90 days either side of the publication date. Outside that, the row goes
   to review.
-- A `restart` event closes the matching open event by setting `valid_to` on the new row's
-  predecessor. Matching is by refinery and unit, with the most recent open event winning.
+- A `restart` row is a new row. It never writes to the event it ends. Whether an event is open or
+  closed is worked out at query time, not stored. An event is closed as of T if a `restart` row
+  for the same refinery and unit, known by T, matches it. Matching is by refinery and unit, with
+  the most recent open event winning. The match is applied at query time.
 
 ## Revisions
 
 A later source that changes any of unit, capacity, start or expected restart for an existing open
-event produces a new row that supersedes the old one. Nothing is overwritten. The old row keeps
-its `known_at`. The note shows "revised: restart 20 Nov, was 12 Nov".
+event produces a new row with `supersedes` set to the row it replaces. The old row is untouched.
+It keeps its `known_at`, and no column on it is set or changed. Current rows are those no later
+row supersedes. An as-of query at T sees only rows known by T, so it shows the old row until the
+revision was known. The note shows "revised: restart 20 Nov, was 12 Nov".
 
 ## Confidence
 

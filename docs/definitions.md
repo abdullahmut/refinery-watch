@@ -158,7 +158,7 @@ event, so its capacity is counted once. The row with the higher confidence is ke
 type; the others are linked as corroboration. Corroboration count is what lifts `medium` to
 `high`.
 
-Dedupe runs before the write, on open chains only. See
+Dedupe runs before the write, against chains with no restart between the two reports. See
 [010](decisions/010-dedupe-before-write.md).
 
 ## Regions

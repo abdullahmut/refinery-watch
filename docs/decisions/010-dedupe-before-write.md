@@ -1,4 +1,4 @@
-# 010: Dedupe runs before the write, against open events
+# 010: Dedupe runs before the write, against events with no restart between
 
 Date: 2026-11-11
 
@@ -25,9 +25,11 @@ runs on extractions or on rows already in `outage_event`. Rows there are never c
 
 The third. Two SQL functions do the lookup at write time.
 
-- `outage_duplicate_of` returns open outage chains on the same refinery, the same unit or one
-  side with no named unit, and start dates within 3 days. A closed outage is never a candidate,
-  so nothing merges across a restart. A whole-plant row matches only a whole-plant row, so a
+- `outage_duplicate_of` returns outage chains on the same refinery, the same unit or one side
+  with no named unit, and start dates within 3 days. A closed chain is a candidate only when its
+  restart is dated after the report's start, so a late report of an outage that has already
+  ended is the same event. A restart on or before the report's start separates the two, so
+  nothing merges across a restart. A whole-plant row matches only a whole-plant row, so a
   plant stop and a damaged unit at the same site stay apart.
 - `restart_duplicate_of` finds the outage the new restart would end, ignoring closure. If a
   restart already ends that chain, the new one is the same restart. There is no date window.
@@ -38,7 +40,8 @@ current row, with its own event type. "Linked" means an `event_source` row with 
 
 ## Consequences
 
-A re-trip after a restart is a new outage, and two restarts of two outages stay two. With one open
-outage per unit (record 009) there is at most one candidate per named unit. If an unnamed report
-matches several open units, it goes to review. To undo, replace the two function bodies in a new
-migration.
+`write_event` runs the lookup for every new outage row. One match is returned as a duplicate and the
+source is linked as corroboration. Several matches go to review. A re-trip after a restart is a new
+outage, and two restarts of two outages stay two. With one open outage per unit (record 009) there
+is at most one candidate per named unit. If an unnamed report matches several open units, it goes to
+review. To undo, replace the two function bodies in a new migration.

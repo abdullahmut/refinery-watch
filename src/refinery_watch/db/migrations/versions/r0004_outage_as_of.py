@@ -10,11 +10,23 @@ branch_labels = None
 depends_on = None
 
 FUNCTIONS = (
-    "outage_current_as_of(timestamptz), outage_as_of(timestamptz),"
+    "outage_cutoff(), outage_current_as_of(timestamptz), outage_as_of(timestamptz),"
     " match_restart(text, bigint, date, timestamptz)"
 )
 
 STATEMENTS = [
+    """
+    CREATE FUNCTION outage_cutoff() RETURNS timestamptz LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(7746001);
+      RETURN clock_timestamp();
+    END
+    $$
+    """,
+    """
+    COMMENT ON FUNCTION outage_cutoff() IS
+      'Waits for writers to commit, then returns the clock. Call it in autocommit.'
+    """,
     """
     CREATE FUNCTION outage_current_as_of(as_of timestamptz)
     RETURNS SETOF outage_event LANGUAGE sql STABLE AS $$
@@ -36,6 +48,11 @@ STATEMENTS = [
     $$
     """,
     """
+    COMMENT ON FUNCTION outage_as_of(timestamptz) IS
+      'Reproducible only for cut-offs from outage_cutoff(): a row with known_at at or before'
+      ' any other cut-off may still be uncommitted.'
+    """,
+    """
     CREATE FUNCTION match_restart(p_refinery_id text, p_refinery_unit_id bigint,
                                   p_start_date date, p_as_of timestamptz)
     RETURNS bigint LANGUAGE sql STABLE AS $$
@@ -50,6 +67,7 @@ STATEMENTS = [
 ]
 
 PINNED = (
+    "outage_cutoff()",
     "outage_current_as_of(timestamptz)",
     "outage_as_of(timestamptz)",
     "match_restart(text, bigint, date, timestamptz)",

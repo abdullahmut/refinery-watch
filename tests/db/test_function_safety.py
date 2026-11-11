@@ -27,7 +27,7 @@ def test_every_function_pins_search_path_with_pg_temp_last(db: Conn, session_sch
         " AND p.prokind = 'f'",
         (session_schema,),
     ).fetchall()
-    assert len(rows) == 10
+    assert len(rows) == 11
     expected = f"search_path=pg_catalog, {session_schema}, pg_temp"
     for row in rows:
         assert row["proconfig"] == [expected], row["proname"]

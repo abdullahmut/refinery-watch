@@ -82,7 +82,7 @@ def recording_inner() -> tuple[httpx.MockTransport, list[httpx.Request]]:
 
 def test_transport_connects_to_the_ip_and_keeps_the_name_for_host_and_sni() -> None:
     inner, seen = recording_inner()
-    transport = PinnedTransport(inner, {"a.example.com": PUBLIC}, connect_by_ip=True)
+    transport = PinnedTransport(lambda: inner, {"a.example.com": [PUBLIC]}, connect_by_ip=True)
     with httpx.Client(transport=transport) as client:
         client.get("https://a.example.com/path?q=1", headers={"X-T": "1"})
     (request,) = seen
@@ -96,7 +96,9 @@ def test_transport_connects_to_the_ip_and_keeps_the_name_for_host_and_sni() -> N
 
 def test_transport_handles_an_ipv6_pin() -> None:
     inner, seen = recording_inner()
-    transport = PinnedTransport(inner, {"a.example.com": "2606:4700::1111"}, connect_by_ip=True)
+    transport = PinnedTransport(
+        lambda: inner, {"a.example.com": ["2606:4700::1111"]}, connect_by_ip=True
+    )
     with httpx.Client(transport=transport) as client:
         client.get("https://a.example.com/")
     assert seen[0].url.host == "2606:4700::1111"
@@ -105,7 +107,7 @@ def test_transport_handles_an_ipv6_pin() -> None:
 
 def test_transport_refuses_a_host_that_was_never_validated() -> None:
     inner, seen = recording_inner()
-    transport = PinnedTransport(inner, {}, connect_by_ip=True)
+    transport = PinnedTransport(lambda: inner, {}, connect_by_ip=True)
     with httpx.Client(transport=transport) as client, pytest.raises(httpx.ConnectError):
         client.get("https://a.example.com/")
     assert seen == []

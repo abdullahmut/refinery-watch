@@ -7,6 +7,7 @@ from refinery_watch.config import (
     contact_email,
     database_url,
     eia_api_key,
+    fetch_ipv6,
     object_store_settings,
     refineries_csv_path,
 )
@@ -162,3 +163,21 @@ def test_no_minio_names_in_code() -> None:
     for folder in ("src", "tests"):
         for path in (root / folder).rglob("*.py"):
             assert needle not in path.read_text(encoding="utf-8"), path
+
+
+def test_fetch_ipv6_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FETCH_IPV6", raising=False)
+    assert fetch_ipv6() is False
+    monkeypatch.setenv("FETCH_IPV6", "0")
+    assert fetch_ipv6() is False
+
+
+def test_fetch_ipv6_can_be_turned_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FETCH_IPV6", "1")
+    assert fetch_ipv6() is True
+
+
+def test_fetch_ipv6_rejects_other_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FETCH_IPV6", "maybe")
+    with pytest.raises(ConfigError, match="FETCH_IPV6"):
+        fetch_ipv6()

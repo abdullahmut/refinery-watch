@@ -1,6 +1,7 @@
 """GDELT DOC 2.0 adapter. A hit is a lead: the article page is fetched and read."""
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -14,9 +15,10 @@ from refinery_watch.sources.http import (
     FetchError,
     HostBlocked,
     RobotsDisallowed,
+    host_key,
     strip_tracking,
 )
-from refinery_watch.sources.pages import Tally, fetch_page, host_of
+from refinery_watch.sources.pages import Tally, fetch_page
 from refinery_watch.sources.published import plausible
 from refinery_watch.sources.store import (
     NewDocument,
@@ -29,6 +31,7 @@ from refinery_watch.sources.store import (
 from refinery_watch.sources.text import content_sha256, is_thin
 from refinery_watch.terms import TermMatcher
 
+log = logging.getLogger(__name__)
 SOURCE_ID: Final = "gdelt_doc"
 QUERY: Final = (
     "refinery (fire OR outage OR shutdown OR restart OR CDU OR FCC OR hydrocracker) "
@@ -120,7 +123,7 @@ def run(
         return RunOutcome("failed", 0, 0, f"{type(exc).__name__}: {exc}")
     tally = Tally()
     stored = 0
-    api_host = host_of(feed_url)
+    api_host = host_key(feed_url)
     blocked: list[str] = []
     seen_urls: set[str] = set()
     english = [lead for lead in leads if lead.language.casefold() == "english"]
@@ -136,7 +139,7 @@ def run(
         if fetcher.monotonic() >= deadline:
             tally.add("deadline")
             break
-        host = host_of(url)
+        host = host_key(url)
         try:
             fetched = fetch_page(fetcher, url)
         except HostBlocked as exc:
@@ -157,6 +160,7 @@ def run(
             continue
         except Exception:
             # One page that breaks the parser must not end the run.
+            log.exception("page failed to parse")
             tally.add("parse_error")
             continue
         if fetched is None:

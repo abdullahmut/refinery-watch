@@ -37,6 +37,16 @@ def contact_email() -> str:
     return value
 
 
+def fetch_ipv6() -> bool:
+    """FETCH_IPV6: 1 or 0, off by default. The Droplets have no IPv6 address."""
+    value = os.environ.get("FETCH_IPV6", "0").strip().lower()
+    if value in ("1", "true", "yes"):
+        return True
+    if value in ("", "0", "false", "no"):
+        return False
+    raise ConfigError("FETCH_IPV6 must be 1 or 0")
+
+
 def eia_api_key() -> str:
     value = _required("EIA_API_KEY")
     if not re.fullmatch(r"[A-Za-z0-9]+", value):

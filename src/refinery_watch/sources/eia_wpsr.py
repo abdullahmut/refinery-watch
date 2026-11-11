@@ -104,8 +104,15 @@ def redact(body: bytes, api_key: str) -> bytes:
 
 
 def run(
-    conn: Conn, fetcher: Fetcher, store: RawStore, run_id: int, feed_url: str, api_key: str
+    conn: Conn,
+    fetcher: Fetcher,
+    store: RawStore,
+    run_id: int,
+    feed_url: str,
+    api_key: str,
+    deadline: float,
 ) -> RunOutcome:
+    fetcher.set_deadline(deadline)
     try:
         reply = fetcher.get(feed_url, params=build_params(api_key), accept="application/json")
     except FetchError as exc:

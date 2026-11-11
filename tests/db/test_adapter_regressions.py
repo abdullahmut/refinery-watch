@@ -66,12 +66,14 @@ def test_eia_document_and_prices_are_one_transaction(
     first, _, _ = make_fetcher(lambda r: httpx.Response(200, content=body))
     run1 = new_run(app, "fetch_eia_wpsr")
     with pytest.raises(psycopg.errors.QueryCanceled):
-        eia_wpsr.run(app, first, FakeStore(), run1, EIA_URL, "K")
+        eia_wpsr.run(app, first, FakeStore(), run1, EIA_URL, "K", float("inf"))
     finish_run(app, run1, RunOutcome("failed", 0, 0, "QueryCanceled"))
     assert count(app, "raw_document") == 0
     monkeypatch.undo()
     second, _, _ = make_fetcher(lambda r: httpx.Response(200, content=body))
-    outcome = eia_wpsr.run(app, second, FakeStore(), new_run(app, "fetch_eia_wpsr"), EIA_URL, "K")
+    outcome = eia_wpsr.run(
+        app, second, FakeStore(), new_run(app, "fetch_eia_wpsr"), EIA_URL, "K", float("inf")
+    )
     assert outcome.rows_out == 3
     assert count(app, "price") == 3
     assert count(app, "raw_document") == 1
@@ -98,7 +100,7 @@ def lead_list(*paths: str) -> bytes:
 
 
 def test_one_bad_page_does_not_abort_the_gdelt_run(
-    app: Conn, monkeypatch: pytest.MonkeyPatch
+    app: Conn, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     artlist = lead_list("poison", "broken", "a")
 
@@ -134,11 +136,14 @@ def test_one_bad_page_does_not_abort_the_gdelt_run(
     assert outcome.status == "ok"
     assert outcome.note is not None
     assert "parse_error=1" in outcome.note
+    assert "page failed to parse" in caplog.text
     assert "no_pubdate=1" in outcome.note
     assert count(app, "raw_document") == 1
 
 
-def test_one_bad_page_does_not_abort_the_hp_run(app: Conn, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_one_bad_page_does_not_abort_the_hp_run(
+    app: Conn, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     feed = (
         b"<rss><channel>"
         b"<item><title>bad</title><link>https://hp.example.com/news/bad</link></item>"
@@ -172,6 +177,7 @@ def test_one_bad_page_does_not_abort_the_hp_run(app: Conn, monkeypatch: pytest.M
     )
     assert (outcome.status, outcome.rows_out) == ("ok", 1)
     assert outcome.note == "parse_error=1"
+    assert "page failed to parse" in caplog.text
 
 
 def test_finish_of_a_swept_run_is_not_silently_dropped(app: Conn, owner: Conn) -> None:

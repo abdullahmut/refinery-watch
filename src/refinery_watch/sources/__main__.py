@@ -13,6 +13,7 @@ from refinery_watch.config import (
     contact_email,
     database_url,
     eia_api_key,
+    fetch_ipv6,
     object_store_settings,
 )
 from refinery_watch.db.connect import Conn, connect
@@ -21,7 +22,7 @@ from refinery_watch.extract.reference import load_refineries
 from refinery_watch.objects import ObjectStoreError, RawStore, S3RawStore
 from refinery_watch.sources import eia_wpsr, gdelt_doc, hp_rss
 from refinery_watch.sources.clean import clean_text
-from refinery_watch.sources.http import Fetcher, FetchError, Resolver, resolve_host
+from refinery_watch.sources.http import Fetcher, FetchError, Resolver
 from refinery_watch.sources.store import (
     RUN_BUDGET,
     RunNotRunning,
@@ -72,11 +73,11 @@ def _dispatch(
     row: SourceRow,
     eia_key: str | None,
 ) -> RunOutcome:
+    deadline = fetcher.monotonic() + RUN_BUDGET.total_seconds()
     if name == "eia_wpsr":
         if eia_key is None:
             raise ConfigError("EIA_API_KEY is not set")
-        return eia_wpsr.run(conn, fetcher, store, run_id, row.feed_url, eia_key)
-    deadline = fetcher.monotonic() + RUN_BUDGET.total_seconds()
+        return eia_wpsr.run(conn, fetcher, store, run_id, row.feed_url, eia_key, deadline)
     matcher = build_term_matcher(load_refineries(conn))
     conn.rollback()
     if name == "gdelt_doc":
@@ -90,7 +91,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     transport: httpx.BaseTransport | None = None,
-    resolve: Resolver = resolve_host,
+    resolve: Resolver | None = None,
     store: RawStore | None = None,
 ) -> int:
     _setup_logging()
@@ -124,7 +125,7 @@ def main(
             return 0
         raw_store = store or S3RawStore(settings)
         outcome = _run_guarded(
-            name, conn, raw_store, run_id, row, email, eia_key, transport, resolve
+            name, conn, raw_store, run_id, row, email, eia_key, transport, resolve, fetch_ipv6()
         )
         try:
             finish_run(conn, run_id, outcome)
@@ -146,10 +147,11 @@ def _run_guarded(
     email: str,
     eia_key: str | None,
     transport: httpx.BaseTransport | None,
-    resolve: Resolver,
+    resolve: Resolver | None,
+    ipv6: bool,
 ) -> RunOutcome:
     try:
-        with Fetcher(email, transport=transport, resolve=resolve) as fetcher:
+        with Fetcher(email, transport=transport, resolve=resolve, ipv6=ipv6) as fetcher:
             return _dispatch(name, conn, fetcher, store, run_id, row, eia_key)
     except (FetchError, ObjectStoreError) as exc:
         return RunOutcome("failed", 0, 0, f"{type(exc).__name__}: {exc}")

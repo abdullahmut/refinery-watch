@@ -3,12 +3,12 @@
 The standard library parser takes the first matching rule and has no wildcards, so it is not used.
 """
 
-import re
+import string
 from dataclasses import dataclass
 from typing import Final
 
 MAX_BYTES: Final = 500 * 1024
-_HEX = re.compile(r"%[0-9a-fA-F]{2}")
+_UNRESERVED: Final = frozenset(string.ascii_letters + string.digits + "-._~")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +39,23 @@ ALLOW_ALL: Final = RobotsRules((), None)
 
 
 def _normalise(text: str) -> str:
-    return _HEX.sub(lambda m: m.group(0).upper(), text)
+    """RFC 9309 form: unreserved octets decoded, other octets and non-ASCII as upper-case %XX."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        escaped = text[i + 1 : i + 3]
+        if ch == "%" and len(escaped) == 2 and all(c in string.hexdigits for c in escaped):
+            byte = int(escaped, 16)
+            out.append(chr(byte) if chr(byte) in _UNRESERVED else f"%{byte:02X}")
+            i += 3
+            continue
+        if ord(ch) > 127:
+            out.extend(f"%{b:02X}" for b in ch.encode("utf-8", errors="replace"))
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _matches(pattern: str, target: str) -> bool:
@@ -66,7 +82,7 @@ def parse_robots(text: str, token: str) -> RobotsRules:
     """Rules for one product token. The group naming the token wins over the * group."""
     groups: list[tuple[list[str], list[Rule], list[float]]] = []
     in_agents = False
-    for raw in text[:MAX_BYTES].lstrip("﻿").splitlines():
+    for raw in text[:MAX_BYTES].lstrip("\ufeff").splitlines():
         line = raw.split("#", 1)[0].strip()
         field, sep, value = line.partition(":")
         if not sep:
@@ -88,7 +104,7 @@ def parse_robots(text: str, token: str) -> RobotsRules:
                 delay = float(value)
             except ValueError:
                 continue
-            if delay >= 0:
+            if not delay < 0:
                 groups[-1][2].append(delay)
     return _select(groups, token.lower())
 

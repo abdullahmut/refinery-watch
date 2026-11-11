@@ -10,7 +10,6 @@ from refinery_watch.sources import hp_rss
 from refinery_watch.sources.hp_rss import parse_feed
 from refinery_watch.sources.http import BudgetExceeded, HostBlocked
 from refinery_watch.sources.published import parse_iso8601, parse_rfc822
-from refinery_watch.sources.store import RUN_BUDGET
 from refinery_watch.sources.text import decode_html, page_text
 
 
@@ -151,9 +150,9 @@ def crawl_delay(seconds: int) -> Handler:
 
 def test_crawl_delay_over_the_budget_skips_the_host() -> None:
     fetcher, net, clock = make_fetcher(
-        lambda r: httpx.Response(200, content=b"x"), robots=crawl_delay(3600)
+        lambda r: httpx.Response(200, content=b"x"), robots=crawl_delay(50)
     )
-    fetcher.set_deadline(clock.t + 1200)
+    fetcher.set_deadline(clock.t + 20)
     for _ in range(2):
         with pytest.raises(BudgetExceeded, match="crawl_delay_exceeds_budget"):
             fetcher.get("https://a.example.com/x")
@@ -209,9 +208,9 @@ def test_hp_run_stays_inside_its_budget() -> None:
             return httpx.Response(200, content=feed)
         return httpx.Response(200, content=ARTICLE, headers=HTML)
 
-    fetcher, _, clock = make_fetcher(handler, robots=crawl_delay(3600))
+    fetcher, _, clock = make_fetcher(handler, robots=crawl_delay(50))
     start = clock.t
-    deadline = start + RUN_BUDGET.total_seconds()
+    deadline = start + 30.0
     outcome = hp_rss.run(
         None,  # type: ignore[arg-type]
         fetcher,
@@ -222,7 +221,7 @@ def test_hp_run_stays_inside_its_budget() -> None:
         "https://hp.example.com/rss",
         deadline,
     )
-    assert clock.t - start <= RUN_BUDGET.total_seconds(), clock.waits
+    assert clock.t - start <= 30.0, clock.waits
     assert outcome.status == "failed"
     assert outcome.note is not None
     assert "BudgetExceeded" in outcome.note

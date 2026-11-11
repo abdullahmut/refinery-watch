@@ -1,6 +1,8 @@
 """Polite HTTP fetcher shared by every source adapter."""
 
+import functools
 import ipaddress
+import math
 import socket
 import time
 from collections.abc import Callable, Sequence
@@ -25,6 +27,7 @@ MAX_BYTES: Final = 5_000_000
 REQUEST_TOTAL_S: Final = 60.0
 MAX_REDIRECTS: Final = 5
 ALLOWED_PORTS: Final = (80, 443)
+MAX_CRAWL_DELAY_S: Final = 60.0
 
 
 def user_agent(contact_email: str) -> str:
@@ -75,9 +78,18 @@ class BudgetExceeded(FetchError):  # noqa: N818
 Resolver = Callable[[str], list[str]]
 
 
-def resolve_host(host: str) -> list[str]:
-    infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    return sorted({str(info[4][0]) for info in infos})
+def resolve_host(host: str, *, ipv6: bool = False) -> list[str]:
+    """Addresses in the order getaddrinfo gave them, IPv4 only unless ipv6 is set."""
+    family = socket.AF_UNSPEC if ipv6 else socket.AF_INET
+    infos = socket.getaddrinfo(host, None, family, socket.SOCK_STREAM)
+    found: list[str] = []
+    for info in infos:
+        if not ipv6 and info[0] != socket.AF_INET:
+            continue
+        address = str(info[4][0])
+        if address not in found:
+            found.append(address)
+    return found
 
 
 def strip_tracking(url: str) -> str:
@@ -164,41 +176,64 @@ class _Stop:
 
 
 class PinnedTransport(httpx.BaseTransport):
-    """Sends each request to the address the guard validated, not to a fresh DNS answer.
+    """Sends each request to an address the guard validated, not to a fresh DNS answer.
 
-    With connect_by_ip the URL host becomes the IP. The Host header keeps the name, and
-    sni_hostname keeps it for TLS, so certificate checks still use the name.
+    A host has one resolution per run and every address in it was checked together. The first
+    address is tried first. Only a failed connect moves on to the next validated address, so
+    nothing is resolved again. With connect_by_ip the URL host becomes the IP. The Host header
+    keeps the name, and sni_hostname keeps it for TLS, so certificate checks still use the name.
+    Each host gets its own inner transport, so two hosts behind one IP never share a connection.
     """
 
     def __init__(
-        self, inner: httpx.BaseTransport, pins: dict[str, str], *, connect_by_ip: bool
+        self,
+        make_inner: Callable[[], httpx.BaseTransport],
+        pins: dict[str, list[str]],
+        *,
+        connect_by_ip: bool,
     ) -> None:
-        self._inner = inner
+        self._make_inner = make_inner
+        self._inners: dict[str, httpx.BaseTransport] = {}
         self._pins = pins
         self._connect_by_ip = connect_by_ip
 
+    def transport_for(self, name: str) -> httpx.BaseTransport:
+        if name not in self._inners:
+            self._inners[name] = self._make_inner()
+        return self._inners[name]
+
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         name = request.url.raw_host.decode("ascii").lower()
-        ip = self._pins.get(name)
-        if ip is None:
-            raise httpx.ConnectError("host has no validated address")
+        inner = self.transport_for(name)
+        failure: httpx.TransportError | None = None
+        for ip in self._pins.get(name, []):
+            try:
+                return inner.handle_request(self._aim(request, name, ip))
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                failure = exc
+        raise failure or httpx.ConnectError("host has no validated address")
+
+    def _aim(self, request: httpx.Request, name: str, ip: str) -> httpx.Request:
         extensions = dict(request.extensions)
         extensions["pinned_ip"] = ip
-        if self._connect_by_ip:
-            extensions["sni_hostname"] = name
-            request = httpx.Request(
-                request.method,
-                request.url.copy_with(host=ip),
-                headers=request.headers,
-                stream=request.stream,
-                extensions=extensions,
-            )
-        else:
+        if not self._connect_by_ip:
             request.extensions = extensions
-        return self._inner.handle_request(request)
+            return request
+        extensions["sni_hostname"] = name
+        return httpx.Request(
+            request.method,
+            request.url.copy_with(host=ip),
+            headers=request.headers,
+            stream=request.stream,
+            extensions=extensions,
+        )
 
     def close(self) -> None:
-        self._inner.close()
+        closed: set[int] = set()
+        for inner in self._inners.values():
+            if id(inner) not in closed:
+                closed.add(id(inner))
+                inner.close()
 
 
 class Fetcher:
@@ -207,21 +242,32 @@ class Fetcher:
         contact_email: str,
         *,
         transport: httpx.BaseTransport | None = None,
-        resolve: Resolver = resolve_host,
+        resolve: Resolver | None = None,
+        ipv6: bool = False,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
-        self._pins: dict[str, str] = {}
-        inner = transport or httpx.HTTPTransport(retries=0, trust_env=False)
+        self._pins: dict[str, list[str]] = {}
+        if transport is None:
+
+            def make_inner() -> httpx.BaseTransport:
+                return httpx.HTTPTransport(retries=0, trust_env=False)
+
+        else:
+            injected = transport
+
+            def make_inner() -> httpx.BaseTransport:
+                return injected
+
         self._client = httpx.Client(
-            transport=PinnedTransport(inner, self._pins, connect_by_ip=transport is None),
+            transport=PinnedTransport(make_inner, self._pins, connect_by_ip=transport is None),
             timeout=TIMEOUT,
             follow_redirects=False,
             trust_env=False,
             headers={"User-Agent": user_agent(contact_email), "Accept-Encoding": "identity"},
         )
-        self._resolve = resolve
+        self._resolve = resolve or functools.partial(resolve_host, ipv6=ipv6)
         self._monotonic = monotonic
         self._sleep = sleep
         self._now = now
@@ -315,7 +361,7 @@ class Fetcher:
         # Raised outside the except block for the same reason: no chained resolver error.
         if not addresses or not all(_public(a) for a in addresses):
             raise AddressRefused("non_public_address", url)
-        self._pins[host] = addresses[0]
+        self._pins[host] = addresses
 
     def _check_robots(self, url: str) -> None:
         parts = urlsplit(url)
@@ -323,7 +369,7 @@ class Fetcher:
         rules = self._robots.get(origin)
         if rules is None:
             rules = self._robots[origin] = self._fetch_robots(origin)
-        target = parts.path + (f"?{parts.query}" if parts.query else "")
+        target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
         if rules.rules is None or not rules.rules.allows(target):
             raise RobotsDisallowed("robots_disallowed", url)
 
@@ -338,6 +384,8 @@ class Fetcher:
             else:
                 rules = ALLOW_ALL
             if rules.crawl_delay is not None:
+                if not math.isfinite(rules.crawl_delay) or rules.crawl_delay > MAX_CRAWL_DELAY_S:
+                    return _Robots(None)
                 host = host_key(origin)
                 if self._would_pass_deadline(rules.crawl_delay):
                     self._over_budget.add(host)

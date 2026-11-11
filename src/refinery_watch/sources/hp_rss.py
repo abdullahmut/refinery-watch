@@ -1,5 +1,6 @@
 """Hydrocarbon Processing RSS adapter: feed items, then each article page."""
 
+import logging
 from dataclasses import dataclass
 from typing import Final, Literal
 from xml.etree.ElementTree import Element
@@ -15,9 +16,10 @@ from refinery_watch.sources.http import (
     FetchError,
     HostBlocked,
     RobotsDisallowed,
+    host_key,
     strip_tracking,
 )
-from refinery_watch.sources.pages import Tally, fetch_page, host_of
+from refinery_watch.sources.pages import Tally, fetch_page
 from refinery_watch.sources.published import Published, parse_rfc822, plausible
 from refinery_watch.sources.store import (
     NewDocument,
@@ -32,6 +34,7 @@ from refinery_watch.terms import TermMatcher
 
 HpSource = Literal["hp_news", "hp_refining"]
 MAX_ARTICLES: Final = 50
+log = logging.getLogger(__name__)
 FEED_ACCEPT: Final = "application/rss+xml, application/xml"
 
 
@@ -102,10 +105,10 @@ def run(
     tally = Tally()
     tally.add("bad_item", len(reasons))
     stored = 0
-    feed_host = host_of(feed_url)
+    feed_host = host_key(feed_url)
     for item in items[:MAX_ARTICLES]:
         link = strip_tracking(item.link)
-        if host_of(link) != feed_host:
+        if host_key(link) != feed_host:
             tally.add("off_host")
             continue
         if url_known(conn, [link]):
@@ -130,6 +133,7 @@ def run(
             continue
         except Exception:
             # One page that breaks the parser must not end the run.
+            log.exception("page failed to parse")
             tally.add("parse_error")
             continue
         if fetched is None:

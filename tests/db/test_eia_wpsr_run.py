@@ -35,7 +35,7 @@ def go(conn: Conn, fetcher: Fetcher, store: FakeStore) -> RunOutcome:
     assert found is not None
     conn.commit()
     run_id = int(found["id"])
-    outcome = run(conn, fetcher, store, run_id, FEED_URL, KEY)
+    outcome = run(conn, fetcher, store, run_id, FEED_URL, KEY, float("inf"))
     finish_run(conn, run_id, outcome)
     return outcome
 

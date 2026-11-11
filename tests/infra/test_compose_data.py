@@ -22,7 +22,10 @@ PG_SETTINGS: Final[dict[str, str]] = {
     "maintenance_work_mem": "32MB",
     "autovacuum_max_workers": "2",
     "autovacuum_work_mem": "16MB",
-    "max_connections": "20",
+    "max_connections": "15",
+    "superuser_reserved_connections": "3",
+    "hash_mem_multiplier": "1",
+    "temp_buffers": "1MB",
     "max_parallel_workers_per_gather": "0",
     "effective_cache_size": "256MB",
     "timezone": "UTC",
@@ -46,6 +49,7 @@ ROLES_SQL: Final[list[str]] = [
     "REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;",
 ]
 BACKEND_OVERHEAD_MIB: Final[int] = 6
+BACKGROUND_MIB: Final[int] = 30
 TOTAL_LIMIT_MIB: Final[int] = 704
 LOGGING: Final[dict[str, Any]] = {
     "driver": "json-file",
@@ -145,12 +149,29 @@ def test_postgres_settings_fit_limit() -> None:
     assert mib(settings["shared_buffers"]) * 4 <= limit
     worst = (
         mib(settings["shared_buffers"])
-        + int(settings["max_connections"]) * (mib(settings["work_mem"]) + BACKEND_OVERHEAD_MIB)
+        + int(settings["max_connections"])
+        * (
+            mib(settings["work_mem"]) * int(settings["hash_mem_multiplier"])
+            + mib(settings["temp_buffers"])
+            + BACKEND_OVERHEAD_MIB
+        )
         + int(settings["autovacuum_max_workers"]) * mib(settings["autovacuum_work_mem"])
         + mib(settings["maintenance_work_mem"])
+        + BACKGROUND_MIB
     )
     assert worst < limit
+
+
+def test_stop_grace_period_avoids_sigkill() -> None:
     assert services("compose.yaml")["postgres"]["stop_grace_period"] == "60s"
+
+
+def test_role_connection_limits_fit_max_connections() -> None:
+    limits = [int(n) for n in re.findall(r"CONNECTION LIMIT (\d+)", " ".join(ROLES_SQL))]
+    settings = pg_settings()
+    usable = int(settings["max_connections"]) - int(settings["superuser_reserved_connections"])
+    assert len(limits) == 2
+    assert sum(limits) <= usable
 
 
 def port_strings(name: str) -> list[tuple[str, str]]:

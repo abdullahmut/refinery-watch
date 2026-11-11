@@ -38,7 +38,13 @@ services:
       - -c
       - autovacuum_work_mem=16MB
       - -c
-      - max_connections=20
+      - max_connections=15
+      - -c
+      - superuser_reserved_connections=3
+      - -c
+      - hash_mem_multiplier=1
+      - -c
+      - temp_buffers=1MB
       - -c
       - max_parallel_workers_per_gather=0
       - -c

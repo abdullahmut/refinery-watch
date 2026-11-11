@@ -2,9 +2,12 @@
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := test
-.PHONY: up down test lint tf-check deploy backup restore
+.PHONY: up down test test-integration lint tf-check deploy backup restore
 
 test:
+	uv run --locked pytest -m "not integration" --cov --cov-report=term-missing --cov-fail-under=0
+
+test-integration:
 	uv run --locked pytest --cov --cov-report=term-missing
 
 lint:

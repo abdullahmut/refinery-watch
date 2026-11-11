@@ -7,10 +7,11 @@ from decimal import Decimal
 from typing import Final, Literal
 
 import psycopg
+from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
 
 from refinery_watch.db.connect import Conn
-from refinery_watch.db.events import first, require_aware
+from refinery_watch.db.events import require_aware
 from refinery_watch.objects import RawStore
 from refinery_watch.sources.clean import clean_text
 from refinery_watch.sources.published import Published
@@ -44,6 +45,13 @@ class NewDocument:
     fetched_at: datetime
     published: Published | None
     prefilter_terms: tuple[str, ...]
+
+
+def _returned_row(row: DictRow | None) -> DictRow:
+    # Local on purpose: the shared helper has a different name on the schema branch.
+    if row is None:
+        raise RuntimeError("query returned no row")
+    return row
 
 
 def object_key(source_id: str, fetched_at: datetime, sha: str, ext: str) -> str:
@@ -122,7 +130,7 @@ def store_document(
                     terms,
                 ),
             ).fetchone()
-            new_id = int(first(row)["id"])
+            new_id = int(_returned_row(row)["id"])
             if in_same_tx is not None:
                 in_same_tx(new_id)
     except psycopg.errors.UniqueViolation as exc:
@@ -144,7 +152,7 @@ def flag_thin_page(conn: Conn, raw_document_id: int, url: str, body_chars: int, 
         " VALUES (%s, %s, 'thin_page') RETURNING id",
         (raw_document_id, Jsonb({"url": url, "body_chars": body_chars, "images": images})),
     ).fetchone()
-    new_id = int(first(row)["id"])
+    new_id = int(_returned_row(row)["id"])
     conn.commit()
     return new_id
 
@@ -251,7 +259,7 @@ def start_run(
             row = conn.execute(
                 "INSERT INTO job_run (job) VALUES (%s) RETURNING id", (job,)
             ).fetchone()
-            new_id = int(first(row)["id"])
+            new_id = int(_returned_row(row)["id"])
     except psycopg.errors.UniqueViolation:
         busy = True
     if busy:

@@ -2,6 +2,8 @@
 
 Date: 2026-11-11
 
+Status: amended 2026-11-11. Postgres stands. The object store is pending; see Amendment.
+
 ## Context
 
 The system needs one relational database for events, prices and job runs, and a store for raw
@@ -36,3 +38,13 @@ disk. Image updates are a manual pin bump.
 
 To undo: Postgres moves with `pg_dump` and `pg_restore`. Raw documents move with `mc mirror` to
 any S3 store, and the code changes only its endpoint and keys.
+
+## Amendment, 2026-11-11
+
+When the stack was built, no MinIO server image could be pulled from a publisher we trust. Docker
+Hub has no `minio/minio` or `minio/mc` repository, quay.io and ghcr.io refuse anonymous pulls, and
+Bitnami has no image. The one image that resolves, `chainguard/minio`, comes from a different
+publisher. Postgres is built as decided, at 384 MB. The object store is held, with 320 MB of the
+data Droplet (256 MB for the service, 64 MB for a setup job) kept free for it, until the owner
+chooses between MinIO from another image, Garage, SeaweedFS and DigitalOcean Spaces. That choice
+gets its own record, which replaces the MinIO part of this one.

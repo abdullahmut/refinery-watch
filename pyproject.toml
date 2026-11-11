@@ -20,6 +20,7 @@ packages = ["src/refinery_watch"]
 dev = [
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
+    "ruff>=0.17.4",
 ]
 
 [tool.pytest.ini_options]
@@ -37,3 +38,17 @@ branch = true
 fail_under = 85
 show_missing = true
 exclude_also = ["if TYPE_CHECKING:"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "DTZ", "S", "T20", "ERA", "FIX", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.format]
+line-ending = "lf"

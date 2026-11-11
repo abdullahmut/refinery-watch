@@ -62,7 +62,5 @@ Raw documents go to `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`.
 - Where the second backup copy lives: the R2 backup bucket, off DigitalOcean (029).
 - Where Terraform state lives: local, see [006](decisions/006-terraform-state-location.md).
 - The seven open decisions listed in [docs/definitions.md](definitions.md): undecided.
-- Open for the `outage_event` schema spec. A `supersedes` column on the new row points at the row
-  it replaces. UPDATE and DELETE are revoked at the database level. Current rows are those no later
-  row supersedes. A row may supersede only a current row, so `supersedes` is unique. The
-  provisional restart and revision rules are in [docs/definitions.md](definitions.md).
+- The schema rules are in records [009](decisions/009-one-open-outage-per-unit.md) to
+  [014](decisions/014-migrations-and-test-database.md).

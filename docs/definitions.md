@@ -78,11 +78,11 @@ tested against a seeded database.
 
 A `restart` row is a new row. It never writes to the event it ends. On a `restart` row,
 `start_date` is the date the unit came back. If that date is not known, the restart goes to
-review. The row carries `ends_event`, a new column: the id of the event row it ends.
-`ends_event` is set once, when the restart row is written, and is null on `unplanned` and
+review. The row carries `ends_event_id`, a new column: the id of the event row it ends.
+`ends_event_id` is set once, when the restart row is written, and is null on `unplanned` and
 `planned` rows.
 
-To set `ends_event`, look only at rows current at the restart's `known_at`. Of those, take the
+To set `ends_event_id`, look only at rows current at the restart's `known_at`. Of those, take the
 `unplanned` and `planned` rows that:
 
 - are for the same refinery and unit. A null unit equals a null unit, so a whole-plant restart
@@ -98,15 +98,14 @@ take an earlier restart. A restart reported late still ends the event it follows
 started after the unit came back. This assumes two outages on one unit may both be open; open
 decision 6 may change the outcome.
 
-An event is closed as of T if a `restart` row current as of T has `ends_event` pointing at the
+An event is closed as of T if a `restart` row current as of T has `ends_event_id` pointing at the
 event's row or at any row in its `supersedes` chain. Otherwise it is open. A revision written after
 the restart is in the same chain, so the event stays closed.
 
-Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event` set to
+Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event_id` set to
 E1. The CDU goes down again on 20 Nov (E2). As of 21 Nov, E1 is closed and E2 is open. If instead
 X1 were first reported on 25 Nov with the unit back on 10 Nov, it would still end E1, because E2
-started after 10 Nov. That case assumes E1 and E2 are both open from 20 to 25 Nov. Under open
-decision 6 they may not be, and X1 may go to review instead.
+started after 10 Nov. Under open decision 6, E2 goes to review while E1 is open, so X1 still ends E1.
 
 ## Revisions
 
@@ -118,7 +117,7 @@ row until the revision was known. The note shows "revised: restart 20 Nov, was 1
 
 - A revision of a closed event, for example a capacity figure published after the restart, is in
   the same chain as the row the restart points at. The event stays closed.
-- A revision of a `restart` row copies `ends_event` from the row it supersedes. It never matches
+- A revision of a `restart` row copies `ends_event_id` from the row it supersedes. It never matches
   again. A revision that changes the refinery or unit of a restart, or moves its date before the
   `start_date` of the event it ends, goes to review.
 - A new row may supersede only a row that is current when the new row is written. A second row
@@ -147,17 +146,16 @@ These rules are provisional. They are settled in the `outage_event` schema spec,
 tested against a seeded database.
 
 Two extractions are the same event when they are in the same family, the refinery matches, the
-unit matches (or one is null), and start dates are within 3 days. There are two families:
+unit matches (or one is null), and start dates are within 3 days. A whole-plant row matches
+only a whole-plant row. There are two families:
 outages (`unplanned` and `planned`) and restarts (`restart`). A shutdown and its own restart are
 never one event. One outage that one source calls planned and another calls unplanned is one
 event, so its capacity is counted once. The row with the higher confidence is kept, with its event
 type; the others are linked as corroboration. Corroboration count is what lifts `medium` to
 `high`.
 
-Not settled: whether dedupe runs on extractions before they reach `outage_event`, or on rows
-already in it. If it runs after, "kept" and "linked" cannot mean changing or removing a row,
-because rows in `outage_event` are never updated or deleted. This needs a decision record before
-dedupe is coded.
+Dedupe runs before the write, on open chains only. See
+[010](decisions/010-dedupe-before-write.md).
 
 ## Regions
 
@@ -173,27 +171,27 @@ review of the restart and dedupe rules. Each needs a decision record before the 
 1. **Old starts mentioned in passing.** The 90-day window rejects a March outage described in a
    July article. Options: keep strict and lose it; allow with `confidence = low` and a flag; widen
    to 180 days. Leaning: allow with `low`, because the row is still true and a desk would rather
-   see it flagged than not at all.
+   see it flagged than not at all. Provisional answer: record 012.
 2. **Null start date.** "Remains shut, restart undecided" with no start. Options: reject; accept
    with `start_date` set to the publication date and a `start_unknown` flag. Leaning: accept,
    flagged. `known_at` is not affected either way. The record must also say whether a placeholder
-   `start_date` takes part in the 3-day dedupe window and in restart matching.
+   `start_date` takes part in the 3-day dedupe window and in restart matching. Provisional answer: record 012.
 3. **Reactivation of a closed plant.** A mothballed CDU returning is a `refinery.status` change,
    not a `restart`, by the rule above. Confirm this is what the note should show (as a reference
-   change line, not in capacity returning).
-4. **Partial sub-unit restarts with no figure.** Default: no row. Confirm.
+   change line, not in capacity returning). Provisional answer: record 013.
+4. **Partial sub-unit restarts with no figure.** Default: no row. Confirm. Provisional answer: record 013.
 5. **Whole-plant restart with unit outages open.** "The refinery is back online" while named units
-   at that refinery are open. `ends_event` holds one id, so as written the restart matches only an
+   at that refinery are open. `ends_event_id` holds one id, so as written the restart matches only an
    open whole-plant outage, and goes to review if there is none. The same applies in reverse: a
    unit restart never ends a whole-plant outage. Options: keep this; write one `restart` row per
    open unit; let a whole-plant restart close every open event at that refinery, which needs a
-   different column than a single `ends_event`.
+   different column than a single `ends_event_id`. Provisional answer: record 011.
 6. **Two open outages on one unit.** A new outage on a unit that already has an open outage leaves
    both open. The unit counts offline twice, and the first outage may never close. Intended rule:
    a unit has at most one open outage at a time. A new shutdown on a unit with an open outage
    either supersedes it or goes to review, never both open. The schema enforces this with a
-   constraint, not only in code.
+   constraint, not only in code. Provisional answer: record 009.
 7. **Dedupe across a restart.** The 3-day window ignores a restart in between. Restarts of two
    different outages merge, and a re-trip after a restart merges back into the first outage.
    Intended rule: dedupe never merges two rows with a restart between them, and restarts dedupe
-   only by the event they end.
+   only by the event they end. Provisional answer: record 010.

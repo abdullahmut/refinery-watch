@@ -48,7 +48,9 @@ REFINERY_COLUMNS = (
     "verified_on",
     "notes",
 )
-REFINERY_VALUE_COLUMNS = REFINERY_COLUMNS[1:7] + REFINERY_COLUMNS[8:]
+REFINERY_VALUE_COLUMNS = tuple(
+    c for c in REFINERY_COLUMNS if c not in ("refinery_id", "major_units")
+)
 UNIT_CODES = frozenset(
     {"CDU", "VDU", "FCC", "HCU", "COK", "REF", "HDT_D", "HDT_G", "ALK", "ISOM", "SRU", "H2", "RHU"}
 )

@@ -90,7 +90,8 @@ def test_restart_gets_ends_event_id_and_revision_gets_chain_id(app_db: Conn) -> 
         ("family", "family_mismatch"),
         ("no_match", "no_restart_match"),
         ("occupied", "unit_has_open_outage"),
-        ("unit_change", "revision_changes_unit"),
+        ("refinery_change", "revision_changes_unit"),
+        ("unit_change_closed", "revision_changes_unit"),
         ("early_restart", "restart_before_event_start"),
         ("late_revision", "revision_after_restart_date"),
         ("plant_restart", "plant_restart_units_open"),
@@ -111,9 +112,14 @@ def test_review_reason_for_each_rule(app_db: Conn, scenario: str, reason: str) -
         candidate = restart_row(app_db, refinery_id="R9003", refinery_unit_id=None, known_at=ts(3))
     elif scenario == "occupied":
         candidate = new_row(app_db, known_at=ts(3))
-    elif scenario == "unit_change":
+    elif scenario == "refinery_change":
         candidate = new_row(
             app_db, supersedes=e1.id, known_at=ts(3), refinery_id="R9003", refinery_unit_id=None
+        )
+    elif scenario == "unit_change_closed":
+        must_write(app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), 3)
+        candidate = new_row(
+            app_db, supersedes=e1.id, known_at=ts(6), refinery_unit_id=None, whole_plant=True
         )
     elif scenario == "early_restart":
         x1 = must_write(app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), 3)

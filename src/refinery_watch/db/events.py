@@ -1,6 +1,6 @@
 """Event write path and the as-of and dedupe reads. Callers own the transaction."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Final, Literal
@@ -111,7 +111,7 @@ class OutageRow:
     known_at: datetime
 
 
-def first(row: DictRow | None) -> DictRow:
+def require_row(row: DictRow | None) -> DictRow:
     if row is None:
         raise RuntimeError("query returned no row")
     return row
@@ -138,7 +138,7 @@ def review_from(exc: psycopg.Error) -> Review | None:
 def insert_source(
     conn: Conn, outage_event_id: int, source: SourceLink, role: str, known_at: datetime | None
 ) -> int:
-    found = conn.execute(
+    cursor = conn.execute(
         "INSERT INTO event_source (outage_event_id, raw_document_id, extraction_id, role,"
         " source_kind, evidence, known_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
@@ -150,13 +150,13 @@ def insert_source(
             source.evidence,
             known_at,
         ),
-    ).fetchone()
-    found = first(found)
+    )
+    found = require_row(cursor.fetchone())
     return int(found["id"])
 
 
 def insert_event(conn: Conn, row: NewEventRow) -> Written:
-    found = conn.execute(
+    cursor = conn.execute(
         "INSERT INTO outage_event (event_type, refinery_id, refinery_unit_id, whole_plant,"
         " unit_label, capacity_affected_kbd, capacity_basis, start_date, start_unknown,"
         " old_start, expected_restart_date, cause, confidence, match_score, supersedes, known_at)"
@@ -165,9 +165,9 @@ def insert_event(conn: Conn, row: NewEventRow) -> Written:
         " %(start_unknown)s, %(old_start)s, %(expected_restart_date)s, %(cause)s,"
         " %(confidence)s, %(match_score)s, %(supersedes)s, %(known_at)s)"
         " RETURNING id, chain_id, ends_event_id",
-        {name: getattr(row, name) for name in row.__slots__},
-    ).fetchone()
-    found = first(found)
+        asdict(row),
+    )
+    found = require_row(cursor.fetchone())
     return Written(int(found["id"]), int(found["chain_id"]), found["ends_event_id"])
 
 
@@ -200,11 +200,11 @@ def match_restart(
     conn: Conn, refinery_id: str, refinery_unit_id: int | None, start_date: date, as_of: datetime
 ) -> int | None:
     require_aware(as_of, "as_of")
-    found = conn.execute(
+    cursor = conn.execute(
         "SELECT match_restart(%s, %s, %s, %s) AS id",
         (refinery_id, refinery_unit_id, start_date, as_of),
-    ).fetchone()
-    found = first(found)
+    )
+    found = require_row(cursor.fetchone())
     return None if found["id"] is None else int(found["id"])
 
 
@@ -229,9 +229,9 @@ def restart_duplicate_of(
     conn: Conn, refinery_id: str, refinery_unit_id: int | None, start_date: date, as_of: datetime
 ) -> int | None:
     require_aware(as_of, "as_of")
-    found = conn.execute(
+    cursor = conn.execute(
         "SELECT restart_duplicate_of(%s, %s, %s, %s) AS id",
         (refinery_id, refinery_unit_id, start_date, as_of),
-    ).fetchone()
-    found = first(found)
+    )
+    found = require_row(cursor.fetchone())
     return None if found["id"] is None else int(found["id"])

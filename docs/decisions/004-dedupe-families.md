@@ -2,6 +2,10 @@
 
 Date: 2026-11-11
 
+Status: provisional until the `outage_event` schema spec. Open decision 7 in docs/definitions.md
+(no merge across a restart; restarts dedupe by the event they end) replaces the restart rule here
+and limits the outage rule.
+
 ## Context
 
 The Dedupe section of docs/definitions.md first treated any two extractions for the same refinery,

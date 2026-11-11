@@ -2,7 +2,7 @@
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := test
-.PHONY: up test lint deploy backup restore
+.PHONY: up test lint tf-check deploy backup restore
 
 test:
 	uv run --locked pytest --cov --cov-report=term-missing
@@ -11,6 +11,11 @@ lint:
 	uv run --locked ruff check .
 	uv run --locked ruff format --check .
 	uv run --locked mypy
+
+tf-check:
+	terraform -chdir=infra/terraform fmt -check -recursive -diff
+	terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
+	terraform -chdir=infra/terraform validate
 
 up:
 	echo "up: not built. No Compose file exists yet." >&2

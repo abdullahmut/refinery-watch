@@ -36,13 +36,13 @@ def test_upgrade_reaches_head_and_is_repeatable(pg_server: str, fresh_schema: st
     assert current(pg_server, fresh_schema) == head()
 
 
-@pytest.mark.parametrize("bad", ["x; drop", "Role", "1abc", "", "a-b", 'a"b'])
+@pytest.mark.parametrize("bad", ["x; drop", "Role", "1abc", "", "a-b", 'a"b', "a" * 64])
 def test_bad_app_role_refused_before_connecting(bad: str) -> None:
     with pytest.raises(ValueError, match="app_role"):
         migrate.upgrade("postgresql://nobody@127.0.0.1:1/none", app_role=bad)
 
 
-@pytest.mark.parametrize("bad", ["public; drop", "Public", "a b"])
+@pytest.mark.parametrize("bad", ["public; drop", "Public", "a b", "s" * 64])
 def test_bad_schema_refused_before_connecting(bad: str) -> None:
     with pytest.raises(ValueError, match="schema"):
         migrate.upgrade("postgresql://nobody@127.0.0.1:1/none", schema=bad)

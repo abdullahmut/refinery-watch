@@ -5,7 +5,7 @@ from typing import Final
 
 from alembic import context
 
-IDENT: Final = re.compile(r"^[a-z_][a-z0-9_]*$")
+IDENT: Final = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
 def check_identifier(value: str, label: str) -> str:

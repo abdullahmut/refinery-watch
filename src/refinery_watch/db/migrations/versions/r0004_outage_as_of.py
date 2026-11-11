@@ -11,7 +11,7 @@ depends_on = None
 
 FUNCTIONS = (
     "outage_cutoff(), outage_current_as_of(timestamptz), outage_as_of(timestamptz),"
-    " match_restart(text, bigint, date, timestamptz)"
+    " match_restart(text, bigint, date, timestamptz, boolean)"
 )
 
 STATEMENTS = [
@@ -54,11 +54,13 @@ STATEMENTS = [
     """,
     """
     CREATE FUNCTION match_restart(p_refinery_id text, p_refinery_unit_id bigint,
-                                  p_start_date date, p_as_of timestamptz)
+                                  p_start_date date, p_as_of timestamptz,
+                                  p_whole_plant boolean DEFAULT false)
     RETURNS bigint LANGUAGE sql STABLE AS $$
       SELECT o.id FROM outage_as_of(p_as_of) o
       WHERE o.refinery_id = p_refinery_id
         AND o.refinery_unit_id IS NOT DISTINCT FROM p_refinery_unit_id
+        AND o.whole_plant = p_whole_plant
         AND o.start_date <= p_start_date
       ORDER BY o.start_date DESC, o.known_at DESC, o.id ASC
       LIMIT 1
@@ -70,7 +72,7 @@ PINNED = (
     "outage_cutoff()",
     "outage_current_as_of(timestamptz)",
     "outage_as_of(timestamptz)",
-    "match_restart(text, bigint, date, timestamptz)",
+    "match_restart(text, bigint, date, timestamptz, boolean)",
 )
 
 

@@ -195,12 +195,17 @@ def outage_as_of(conn: Conn, as_of: datetime) -> list[OutageRow]:
 
 
 def match_restart(
-    conn: Conn, refinery_id: str, refinery_unit_id: int | None, start_date: date, as_of: datetime
+    conn: Conn,
+    refinery_id: str,
+    refinery_unit_id: int | None,
+    start_date: date,
+    as_of: datetime,
+    whole_plant: bool = False,
 ) -> int | None:
     require_aware(as_of, "as_of")
     cursor = conn.execute(
-        "SELECT match_restart(%s, %s, %s, %s) AS id",
-        (refinery_id, refinery_unit_id, start_date, as_of),
+        "SELECT match_restart(%s, %s, %s, %s, %s) AS id",
+        (refinery_id, refinery_unit_id, start_date, as_of, whole_plant),
     )
     found = require_row(cursor.fetchone())
     return None if found["id"] is None else int(found["id"])
@@ -224,12 +229,17 @@ def outage_duplicate_of(
 
 
 def restart_duplicate_of(
-    conn: Conn, refinery_id: str, refinery_unit_id: int | None, start_date: date, as_of: datetime
+    conn: Conn,
+    refinery_id: str,
+    refinery_unit_id: int | None,
+    start_date: date,
+    as_of: datetime,
+    whole_plant: bool = False,
 ) -> int | None:
     require_aware(as_of, "as_of")
     cursor = conn.execute(
-        "SELECT restart_duplicate_of(%s, %s, %s, %s) AS id",
-        (refinery_id, refinery_unit_id, start_date, as_of),
+        "SELECT restart_duplicate_of(%s, %s, %s, %s, %s) AS id",
+        (refinery_id, refinery_unit_id, start_date, as_of, whole_plant),
     )
     found = require_row(cursor.fetchone())
     return None if found["id"] is None else int(found["id"])

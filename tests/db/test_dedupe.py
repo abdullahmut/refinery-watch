@@ -141,6 +141,6 @@ def test_app_role_runs_the_lookups_and_public_cannot(db: Conn, app_db: Conn) -> 
     assert outage_dup(app_db, 1, ts(1)) == []
     row = db.execute(
         "SELECT has_function_privilege('public',"
-        " 'restart_duplicate_of(text, bigint, date, timestamptz)', 'EXECUTE') AS p"
+        " 'restart_duplicate_of(text, bigint, date, timestamptz, boolean)', 'EXECUTE') AS p"
     ).fetchone()
     assert row == {"p": False}

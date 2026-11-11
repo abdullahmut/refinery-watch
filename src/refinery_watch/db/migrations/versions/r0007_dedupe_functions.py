@@ -11,7 +11,7 @@ depends_on = None
 
 FUNCTIONS = (
     "outage_duplicate_of(text, bigint, boolean, date, boolean, timestamptz),"
-    " restart_duplicate_of(text, bigint, date, timestamptz)"
+    " restart_duplicate_of(text, bigint, date, timestamptz, boolean)"
 )
 
 STATEMENTS = [
@@ -33,13 +33,15 @@ STATEMENTS = [
     """,
     """
     CREATE FUNCTION restart_duplicate_of(p_refinery_id text, p_refinery_unit_id bigint,
-                                         p_start_date date, p_as_of timestamptz)
+                                         p_start_date date, p_as_of timestamptz,
+                                         p_whole_plant boolean DEFAULT false)
     RETURNS bigint LANGUAGE sql STABLE AS $$
       WITH latest AS (
         SELECT c.chain_id FROM outage_current_as_of(p_as_of) c
         WHERE c.event_type IN ('unplanned','planned')
           AND c.refinery_id = p_refinery_id
           AND c.refinery_unit_id IS NOT DISTINCT FROM p_refinery_unit_id
+          AND c.whole_plant = p_whole_plant
           AND c.start_date <= p_start_date
         ORDER BY c.start_date DESC, c.known_at DESC, c.id ASC
         LIMIT 1
@@ -56,7 +58,7 @@ STATEMENTS = [
 
 PINNED = (
     "outage_duplicate_of(text, bigint, boolean, date, boolean, timestamptz)",
-    "restart_duplicate_of(text, bigint, date, timestamptz)",
+    "restart_duplicate_of(text, bigint, date, timestamptz, boolean)",
 )
 
 

@@ -58,7 +58,8 @@ BEGIN
         RAISE EXCEPTION 'an outage row cannot end an event' USING ERRCODE = 'RW009';
       END IF;
     ELSE
-      m := match_restart(NEW.refinery_id, NEW.refinery_unit_id, NEW.start_date, NEW.known_at);
+      m := match_restart(NEW.refinery_id, NEW.refinery_unit_id, NEW.start_date, NEW.known_at,
+                         NEW.whole_plant);
       IF m IS NULL THEN
         IF NEW.whole_plant AND EXISTS (
              SELECT 1 FROM outage_as_of(NEW.known_at) o
@@ -104,7 +105,8 @@ BEGIN
     WHERE r.event_type = 'restart' AND t.chain_id = s.chain_id
     LIMIT 1;
     IF FOUND THEN
-      IF NEW.refinery_unit_id IS DISTINCT FROM s.refinery_unit_id THEN
+      IF NEW.refinery_unit_id IS DISTINCT FROM s.refinery_unit_id
+         OR NEW.whole_plant <> s.whole_plant THEN
         RAISE EXCEPTION 'a closed event cannot change unit' USING ERRCODE = 'RW007';
       END IF;
       IF NEW.start_date > closing.start_date THEN
@@ -120,7 +122,8 @@ BEGIN
   ELSE
     -- 9: restart revision
     IF NEW.refinery_id <> s.refinery_id
-       OR NEW.refinery_unit_id IS DISTINCT FROM s.refinery_unit_id THEN
+       OR NEW.refinery_unit_id IS DISTINCT FROM s.refinery_unit_id
+       OR NEW.whole_plant <> s.whole_plant THEN
       RAISE EXCEPTION 'a restart revision cannot change refinery or unit' USING ERRCODE = 'RW007';
     END IF;
     IF NEW.ends_event_id IS NOT NULL AND NEW.ends_event_id <> s.ends_event_id THEN

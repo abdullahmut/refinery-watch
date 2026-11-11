@@ -131,7 +131,7 @@ def test_app_role_can_execute_and_public_cannot(db: Conn, app_db: Conn) -> None:
     row = db.execute(
         "SELECT has_function_privilege('public', 'outage_as_of(timestamptz)', 'EXECUTE') AS p,"
         " has_function_privilege('refinery_test_app', 'outage_as_of(timestamptz)', 'EXECUTE') AS a,"
-        " has_function_privilege('public', 'match_restart(text, bigint, date, timestamptz)',"
-        " 'EXECUTE') AS m"
+        " has_function_privilege('public',"
+        " 'match_restart(text, bigint, date, timestamptz, boolean)', 'EXECUTE') AS m"
     ).fetchone()
     assert row == {"p": False, "a": True, "m": False}

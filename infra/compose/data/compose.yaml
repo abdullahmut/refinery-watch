@@ -55,6 +55,8 @@ services:
       - log_timezone=UTC
       - -c
       - hba_file=/etc/postgresql/pg_hba.conf
+    # Fails during init, when the server listens on no address, and when the app
+    # role is missing.
     healthcheck:
       test:
         - CMD-SHELL

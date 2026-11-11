@@ -18,11 +18,13 @@ session tokens and related-story boxes. One story also appears in two Hydrocarbo
 
 ## Decision
 
-The hash is SHA-256 of the UTF-8 bytes of the normalised headline and body text. For EIA it is the
+The hash is SHA-256 of the UTF-8 bytes of the normalised page title and body text. The title is the
+one the page states for itself, so the feed adapter and the lead adapter hash one story the same
+way. The feed's own headline is stored but not hashed. For EIA it is the
 data rows as canonical JSON, without the request echo. The original bytes still go to the object
 store, under the key `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}` in the raw-documents bucket named
 in config, with the date taken from the fetch time in UTC. An article whose URL is already in
-`raw_document` is not fetched again.
+`raw_document` is not fetched again, whether it was stored with `http` or `https`.
 
 ## Consequences
 

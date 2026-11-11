@@ -12,7 +12,13 @@ from tests.sources.helpers import FakeStore, html_response, make_fetcher, sample
 from refinery_watch.db.connect import Conn
 from refinery_watch.sources import eia_wpsr, gdelt_doc, hp_rss
 from refinery_watch.sources.pages import fetch_page
-from refinery_watch.sources.store import RunNotRunning, RunOutcome, finish_run, start_run
+from refinery_watch.sources.store import (
+    RunNotRunning,
+    RunOutcome,
+    finish_run,
+    start_run,
+    url_known,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -223,3 +229,75 @@ def test_finish_run_note_has_no_control_characters(app: Conn) -> None:
     row = app.execute("SELECT error FROM job_run WHERE id = %s", (run_id,)).fetchone()
     assert row is not None
     assert row["error"] == "first second [0m third"
+
+
+def run_hp_then_gdelt(app: Conn, gdelt_url: str) -> tuple[RunOutcome, RunOutcome]:
+    page = html_response("article_handmade.html")
+    feed = (
+        b"<rss><channel><item><title>Feed headline differs from the page</title>"
+        b"<link>https://news.example.com/a</link></item></channel></rss>"
+    )
+    artlist = json.dumps(
+        {
+            "articles": [
+                {
+                    "url": gdelt_url,
+                    "title": "Lead title differs too",
+                    "seendate": "20261110T143000Z",
+                    "language": "English",
+                }
+            ]
+        }
+    ).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rss":
+            return httpx.Response(200, content=feed)
+        if request.url.path == "/api/v2/doc/doc":
+            return httpx.Response(200, content=artlist)
+        return page
+
+    hp_fetcher, _, _ = make_fetcher(handler)
+    first = hp_rss.run(
+        app,
+        hp_fetcher,
+        FakeStore(),
+        shut_matcher,
+        "hp_news",
+        new_run(app, "fetch_hp_news"),
+        "https://news.example.com/rss",
+        float("inf"),
+    )
+    g_fetcher, _, _ = make_fetcher(handler)
+    second = gdelt_doc.run(
+        app,
+        g_fetcher,
+        FakeStore(),
+        shut_matcher,
+        new_run(app, "fetch_gdelt_doc"),
+        "https://gdelt.example.com/api/v2/doc/doc",
+        60,
+        float("inf"),
+    )
+    return first, second
+
+
+def test_same_page_at_the_other_scheme_is_skipped_by_url(app: Conn) -> None:
+    _, second = run_hp_then_gdelt(app, "http://news.example.com/a")
+    assert count(app, "raw_document") == 1
+    assert second.note is not None
+    assert "known_url=1" in second.note
+
+
+def test_same_page_at_another_url_is_skipped_by_hash(app: Conn) -> None:
+    _, second = run_hp_then_gdelt(app, "https://news.example.com/a-copy")
+    assert count(app, "raw_document") == 1
+    assert second.note is not None
+    assert "known_hash=1" in second.note
+
+
+def test_url_known_ignores_the_scheme(app: Conn) -> None:
+    run_hp_then_gdelt(app, "https://news.example.com/other")
+    assert url_known(app, ["http://news.example.com/a"])
+    assert url_known(app, ["https://news.example.com/a"])
+    assert not url_known(app, ["http://news.example.com/zzz"])

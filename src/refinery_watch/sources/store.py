@@ -65,9 +65,18 @@ def object_key(source_id: str, fetched_at: datetime, sha: str, ext: str) -> str:
     return f"raw/{source_id}/{day:%Y/%m/%d}/{sha}.{ext}"
 
 
+def _both_schemes(url: str) -> list[str]:
+    for here, there in (("https://", "http://"), ("http://", "https://")):
+        if url.startswith(here):
+            return [url, there + url[len(here) :]]
+    return [url]
+
+
 def url_known(conn: Conn, urls: Sequence[str]) -> bool:
+    """True when any URL is stored, whether it was stored with http or https."""
+    wanted = [variant for url in urls for variant in _both_schemes(url)]
     row = conn.execute(
-        "SELECT 1 AS found FROM raw_document WHERE url = ANY(%s) LIMIT 1", (list(urls),)
+        "SELECT 1 AS found FROM raw_document WHERE url = ANY(%s) LIMIT 1", (wanted,)
     ).fetchone()
     return row is not None
 

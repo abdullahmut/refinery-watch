@@ -156,7 +156,7 @@ def run(
                 original=fetched.result.body,
                 ext="html",
                 content_type="text/html",
-                content_sha256=content_sha256(item.title, page.text),
+                content_sha256=content_sha256(page.title, page.text),
                 headline=item.title,
                 body_chars=len(page.text),
                 fetched_at=fetched.result.fetched_at,

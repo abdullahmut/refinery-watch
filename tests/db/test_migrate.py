@@ -125,23 +125,29 @@ def probe_config(tmp_path: Path, url: str, schema: str) -> Config:
     return config
 
 
-def test_env_uses_schema_and_parameters(tmp_path: Path, pg_server: str, fresh_schema: str) -> None:
-    command.upgrade(probe_config(tmp_path, pg_server, fresh_schema), "head")
-    assert current(pg_server, fresh_schema) == "t001"
+def test_env_uses_schema_and_parameters(tmp_path: Path, pg_server: str, empty_schema: str) -> None:
+    command.upgrade(probe_config(tmp_path, pg_server, empty_schema), "head")
+    assert current(pg_server, empty_schema) == "t001"
     with connect(pg_server) as conn:
-        row = conn.execute(f"SELECT schema_name FROM {fresh_schema}.probe").fetchone()
-        assert row == {"schema_name": f"{fresh_schema}:refinery_test_app"}
+        row = conn.execute(f"SELECT schema_name FROM {empty_schema}.probe").fetchone()
+        assert row == {"schema_name": f"{empty_schema}:refinery_test_app"}
         privs = conn.execute(
             "SELECT has_table_privilege('refinery_test_app', %s, 'SELECT') AS s,"
             " has_table_privilege('refinery_test_app', %s, 'UPDATE') AS u,"
             " has_table_privilege('refinery_test_app', %s, 'SELECT') AS v",
-            (f"{fresh_schema}.probe", f"{fresh_schema}.probe", f"{fresh_schema}.alembic_version"),
+            (f"{empty_schema}.probe", f"{empty_schema}.probe", f"{empty_schema}.alembic_version"),
         ).fetchone()
     assert privs == {"s": True, "u": False, "v": False}
 
 
-def test_downgrade_raises(tmp_path: Path, pg_server: str, fresh_schema: str) -> None:
-    config = probe_config(tmp_path, pg_server, fresh_schema)
+def test_downgrade_raises(tmp_path: Path, pg_server: str, empty_schema: str) -> None:
+    config = probe_config(tmp_path, pg_server, empty_schema)
     command.upgrade(config, "head")
+    with pytest.raises(NotImplementedError, match="forward-only"):
+        command.downgrade(config, "-1")
+
+
+def test_real_downgrade_raises(pg_server: str, fresh_schema: str) -> None:
+    config = migrate.alembic_config(pg_server, "refinery_test_app", fresh_schema)
     with pytest.raises(NotImplementedError, match="forward-only"):
         command.downgrade(config, "-1")

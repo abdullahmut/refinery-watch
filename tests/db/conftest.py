@@ -91,6 +91,16 @@ def session_schema(pg_server: str, app_url: str) -> Iterator[str]:
 
 
 @pytest.fixture
+def empty_schema(pg_server: str) -> Iterator[str]:
+    """A new schema with nothing in it."""
+    name = f"rw_test_{secrets.token_hex(4)}"
+    with psycopg.connect(pg_server, autocommit=True) as conn:
+        conn.execute(f"CREATE SCHEMA {name}")
+    yield name
+    drop_schema(pg_server, name)
+
+
+@pytest.fixture
 def fresh_schema(pg_server: str, app_url: str) -> Iterator[str]:
     name = make_schema(pg_server, app_url)
     yield name
@@ -115,3 +125,25 @@ def app_db(session_schema: str, app_url: str) -> Iterator[Conn]:
     yield conn
     conn.rollback()
     conn.close()
+
+
+ALL_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+
+
+@pytest.fixture
+def privileges(db: Conn, app_url: str) -> Callable[[str], set[str]]:
+    """Returns the table privileges the app role holds on a table of the session schema."""
+    role = app_role_of(app_url)
+
+    def held(table: str) -> set[str]:
+        out: set[str] = set()
+        for privilege in ALL_PRIVILEGES:
+            row = db.execute(
+                "SELECT has_table_privilege(%s, %s, %s) AS h", (role, table, privilege)
+            ).fetchone()
+            assert row is not None
+            if row["h"]:
+                out.add(privilege)
+        return out
+
+    return held

@@ -56,7 +56,9 @@ Postgres is the only database. MinIO holds raw documents at
 - Whether the spend cap day runs on UTC or Asia/Dubai: undecided.
 - What the 06:00 note does if the cap is already spent: undecided.
 - Which service sends the note: undecided.
-- Memory limits per container, including how Postgres and MinIO share 1 GB: undecided.
+- Memory limits on the data Droplet: Postgres 384 MB, and 320 MB reserved for the object store,
+  which is pending. See [008](decisions/008-postgres-and-minio.md). Limits on app and ingest:
+  undecided.
 - How deploys reach the VMs: undecided.
 - Where the second backup copy lives: undecided. It must be off the data Droplet to survive losing
   it.

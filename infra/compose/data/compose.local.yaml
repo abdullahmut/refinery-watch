@@ -3,4 +3,5 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
+      - ./postgres/pg_hba.local.conf:/etc/postgresql/pg_hba.conf:ro
       - ./postgres/initdb-local/20-test-roles.sql:/docker-entrypoint-initdb.d/20-test-roles.sql:ro

@@ -55,14 +55,18 @@ ROLES_SQL: Final[list[str]] = [
     "REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;",
     "REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;",
 ]
+TEST_ROLES: Final[str] = "refinery_test_owner,refinery_test_app"
 HBA_RULES: Final[dict[str, list[tuple[str, ...]]]] = {
     "production": [
         ("local", "all", "postgres", "peer"),
         ("local", "all", "all", "scram-sha-256"),
         ("host", "all", "postgres", "0.0.0.0/0", "reject"),
         ("host", "all", "postgres", "::/0", "reject"),
-        ("host", "all", "all", "0.0.0.0/0", "scram-sha-256"),
-        ("host", "all", "all", "::/0", "scram-sha-256"),
+        ("host", "all", TEST_ROLES, "0.0.0.0/0", "reject"),
+        ("host", "all", TEST_ROLES, "::/0", "reject"),
+        ("host", "all", "all", "10.110.0.0/24", "scram-sha-256"),
+        ("host", "all", "all", "0.0.0.0/0", "reject"),
+        ("host", "all", "all", "::/0", "reject"),
     ],
     "laptop": [
         ("local", "all", "postgres", "peer"),
@@ -385,3 +389,13 @@ def test_make_up_and_down() -> None:
     assert "compose.vpc.yaml" not in makefile
     assert "down" in makefile.split(".PHONY:")[1].splitlines()[0].split()
     assert "$(shell" not in makefile
+
+
+def test_hba_allows_only_the_terraform_vpc_range() -> None:
+    text = (ROOT / "infra" / "terraform" / "variables.tf").read_text(encoding="utf-8")
+    match = re.search(r'variable "vpc_ip_range" \{.*?default\s*=\s*"([^"]+)"', text, re.DOTALL)
+    assert match
+    allowed = {
+        rule[3] for rule in hba_rules("production") if rule[0] == "host" and rule[4] != "reject"
+    }
+    assert allowed == {match.group(1)}

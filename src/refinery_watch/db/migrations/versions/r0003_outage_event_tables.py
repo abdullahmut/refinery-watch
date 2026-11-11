@@ -2,7 +2,7 @@
 
 from alembic import op
 
-from refinery_watch.db.migrations.params import grant, revoke
+from refinery_watch.db.migrations.params import grant, pin_search_path, revoke
 
 revision = "0003"
 down_revision = "0002"
@@ -142,9 +142,17 @@ STATEMENTS = [
 
 FUNCTIONS = "outage_append_only(), event_source_before_insert(), outage_event_has_primary_source()"
 
+PINNED = (
+    "outage_append_only()",
+    "event_source_before_insert()",
+    "outage_event_has_primary_source()",
+)
+
 
 def upgrade() -> None:
     for statement in STATEMENTS:
+        op.execute(statement)
+    for statement in pin_search_path(*PINNED):
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES} FROM PUBLIC")
     op.execute(f"REVOKE EXECUTE ON FUNCTION {FUNCTIONS} FROM PUBLIC")

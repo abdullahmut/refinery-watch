@@ -32,3 +32,9 @@ def grant(privileges: str, objects: str) -> str:
 
 def revoke(privileges: str, objects: str) -> str:
     return f'REVOKE {privileges} ON {objects} FROM "{app_role()}"'
+
+
+def pin_search_path(*signatures: str) -> list[str]:
+    """ALTER statements that fix a function's search_path, with pg_temp last."""
+    path = f"pg_catalog, {schema()}, pg_temp"
+    return [f"ALTER FUNCTION {sig} SET search_path = {path}" for sig in signatures]

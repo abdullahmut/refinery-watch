@@ -2,7 +2,7 @@
 
 from alembic import op
 
-from refinery_watch.db.migrations.params import grant
+from refinery_watch.db.migrations.params import grant, pin_search_path
 
 revision = "0004"
 down_revision = "0003"
@@ -49,9 +49,17 @@ STATEMENTS = [
     """,
 ]
 
+PINNED = (
+    "outage_current_as_of(timestamptz)",
+    "outage_as_of(timestamptz)",
+    "match_restart(text, bigint, date, timestamptz)",
+)
+
 
 def upgrade() -> None:
     for statement in STATEMENTS:
+        op.execute(statement)
+    for statement in pin_search_path(*PINNED):
         op.execute(statement)
     op.execute(f"REVOKE EXECUTE ON FUNCTION {FUNCTIONS} FROM PUBLIC")
     op.execute(grant("EXECUTE", f"FUNCTION {FUNCTIONS}"))

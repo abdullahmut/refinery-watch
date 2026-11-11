@@ -2,7 +2,7 @@
 
 from alembic import op
 
-from refinery_watch.db.migrations.params import grant
+from refinery_watch.db.migrations.params import grant, pin_search_path
 
 revision = "0008"
 down_revision = "0007"
@@ -99,9 +99,13 @@ STATEMENTS = [
     """,
 ]
 
+PINNED = ("llm_spend_usd(timestamptz, timestamptz)",)
+
 
 def upgrade() -> None:
     for statement in STATEMENTS:
+        op.execute(statement)
+    for statement in pin_search_path(*PINNED):
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES}, llm_spend FROM PUBLIC")
     op.execute("REVOKE EXECUTE ON FUNCTION llm_spend_usd(timestamptz, timestamptz) FROM PUBLIC")

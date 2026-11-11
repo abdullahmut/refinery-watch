@@ -2,6 +2,8 @@
 
 from alembic import op
 
+from refinery_watch.db.migrations.params import pin_search_path
+
 revision = "0005"
 down_revision = "0004"
 branch_labels = None
@@ -130,9 +132,13 @@ END
 $$
 """
 
+PINNED = ("outage_event_before_insert()",)
+
 
 def upgrade() -> None:
     op.execute(FUNCTION)
+    for statement in pin_search_path(*PINNED):
+        op.execute(statement)
     op.execute("REVOKE EXECUTE ON FUNCTION outage_event_before_insert() FROM PUBLIC")
     op.execute(
         "CREATE TRIGGER outage_event_before_insert BEFORE INSERT ON outage_event"

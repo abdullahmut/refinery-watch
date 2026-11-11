@@ -2,6 +2,8 @@
 
 from alembic import op
 
+from refinery_watch.db.migrations.params import pin_search_path
+
 revision = "0006"
 down_revision = "0005"
 branch_labels = None
@@ -139,9 +141,13 @@ END
 $$
 """
 
+PINNED = ("outage_event_before_insert()",)
+
 
 def upgrade() -> None:
     op.execute(FUNCTION)
+    for statement in pin_search_path(*PINNED):
+        op.execute(statement)
 
 
 def downgrade() -> None:

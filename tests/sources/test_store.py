@@ -2,7 +2,13 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from refinery_watch.sources.store import NewDocument, object_key, store_document
+from refinery_watch.sources.store import (
+    NewDocument,
+    job_name,
+    object_key,
+    robots_cleared,
+    store_document,
+)
 
 SHA = "a" * 64
 
@@ -38,3 +44,36 @@ def test_store_document_refuses_naive_time_before_touching_anything() -> None:
     )
     with pytest.raises(ValueError, match="aware"):
         store_document(None, None, 1, doc)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "open",
+        "api_key_required",
+        "allowed_for_reference_use_ai_training_disallowed",
+        "allowed_except_cms_paths",
+    ],
+)
+def test_clear_statuses_pass(status: str) -> None:
+    assert robots_cleared(status)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "unchecked",
+        "unchecked_binary_robots_response",
+        "robots_refused_fetcher_must_verify",
+        "client_error_to_fetcher",
+        "",
+        "n/a",
+        "OPEN",
+    ],
+)
+def test_unclear_statuses_are_refused(status: str) -> None:
+    assert not robots_cleared(status)
+
+
+def test_job_name() -> None:
+    assert job_name("gdelt_doc") == "fetch_gdelt_doc"

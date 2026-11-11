@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final, Literal
 
 import psycopg
@@ -136,3 +136,113 @@ def flag_thin_page(conn: Conn, raw_document_id: int, url: str, body_chars: int, 
     new_id = int(_returned(row)["id"])
     conn.commit()
     return new_id
+
+
+RunStatus = Literal["ok", "failed", "skipped"]
+INTERVAL_FACTOR: Final = 0.9
+NOTE_MAX_CHARS: Final = 1000
+CLEAR_STATUSES: Final = frozenset({"open", "api_key_required"})
+CLEAR_PREFIX: Final = "allowed"
+
+
+@dataclass(frozen=True, slots=True)
+class RunOutcome:
+    status: RunStatus
+    rows_in: int
+    rows_out: int
+    note: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRow:
+    id: str
+    feed_url: str
+    fetch_interval_min: int
+    robots_status: str
+
+
+class SourceMissing(RuntimeError):  # noqa: N818
+    """The source row is not in the database."""
+
+
+class SourceNotCleared(RuntimeError):  # noqa: N818
+    """The source robots status is not a clear allow."""
+
+
+def job_name(source_id: str) -> str:
+    return "fetch_" + source_id
+
+
+def robots_cleared(status: str) -> bool:
+    """True only for a stated allow. Unchecked, refused and unknown statuses are not."""
+    return status in CLEAR_STATUSES or status.startswith(CLEAR_PREFIX)
+
+
+def source_row(conn: Conn, source_id: str) -> SourceRow:
+    row = conn.execute(
+        "SELECT id, feed_url, fetch_interval_min, robots_status FROM source WHERE id = %s",
+        (source_id,),
+    ).fetchone()
+    if row is None:
+        raise SourceMissing(f"source {source_id} not loaded; run the source seed loader")
+    found = SourceRow(
+        row["id"], row["feed_url"], int(row["fetch_interval_min"]), row["robots_status"]
+    )
+    if not robots_cleared(found.robots_status):
+        raise SourceNotCleared(f"source {source_id} robots status is not a clear allow")
+    return found
+
+
+def _log_skipped(conn: Conn, job: str, why: str) -> None:
+    conn.execute(
+        "INSERT INTO job_run (job, status, finished_at, error)"
+        " VALUES (%s, 'skipped', clock_timestamp(), %s)",
+        (job, why),
+    )
+    conn.commit()
+
+
+def start_run(
+    conn: Conn, job: str, interval_min: int, stale_after: timedelta = timedelta(minutes=40)
+) -> int | None:
+    conn.execute(
+        "UPDATE job_run SET status = 'failed', finished_at = clock_timestamp(),"
+        " error = 'stale: no finish recorded'"
+        " WHERE job = %s AND status = 'running'"
+        " AND started_at < clock_timestamp() - make_interval(secs => %s)",
+        (job, stale_after.total_seconds()),
+    )
+    recent = conn.execute(
+        "SELECT 1 AS found FROM job_run WHERE job = %s AND status IN ('ok', 'failed')"
+        " AND started_at > clock_timestamp() - make_interval(secs => %s) LIMIT 1",
+        (job, INTERVAL_FACTOR * interval_min * 60),
+    ).fetchone()
+    if recent is not None:
+        _log_skipped(conn, job, "interval")
+        return None
+    busy = False
+    new_id = 0
+    try:
+        with conn.transaction():
+            row = conn.execute(
+                "INSERT INTO job_run (job) VALUES (%s) RETURNING id", (job,)
+            ).fetchone()
+            new_id = int(_returned(row)["id"])
+    except psycopg.errors.UniqueViolation:
+        busy = True
+    if busy:
+        _log_skipped(conn, job, "already running")
+        return None
+    conn.commit()
+    return new_id
+
+
+def finish_run(conn: Conn, run_id: int, outcome: RunOutcome) -> None:
+    note = outcome.note[:NOTE_MAX_CHARS] if outcome.note else None
+    conn.rollback()
+    conn.execute(
+        "UPDATE job_run SET status = %s, finished_at = clock_timestamp(), rows_in = %s,"
+        " rows_out = %s, error = %s WHERE id = %s AND status = 'running'",
+        (outcome.status, outcome.rows_in, outcome.rows_out, note, run_id),
+    )
+    conn.commit()

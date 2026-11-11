@@ -63,9 +63,9 @@ several minutes. Poll the port until it answers:
 nc -vz -w 5 <public ip> <ssh_port>
 ```
 
-On first connect, accept the host key only from an address in `ssh_source_addresses`, then run
-`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` over that session and keep the fingerprint in
-your known_hosts. Compare against the Recovery Console only if you are already in it for a repair.
+The first connection trusts the host key on first use. To check it, open the Recovery Console
+and compare `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` with the fingerprint ssh prints.
+Opening the console resets the root password and power-cycles the box. See the second entry.
 
 Then on each Droplet:
 

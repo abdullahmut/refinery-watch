@@ -1,0 +1,56 @@
+"""Event words for the pre-filter. Phrases, no stemming, in match form."""
+
+from typing import Final
+
+from refinery_watch.extract.matching import match_form
+
+__all__ = ["EVENT_TERMS", "match_form"]
+
+EVENT_TERMS: Final[tuple[str, ...]] = (
+    "shut",
+    "shuts",
+    "shut down",
+    "shutdown",
+    "shutting",
+    "tripped",
+    "trip",
+    "unplanned",
+    "outage",
+    "outages",
+    "fire",
+    "blaze",
+    "explosion",
+    "blast",
+    "flaring",
+    "upset",
+    "leak",
+    "offline",
+    "taken offline",
+    "turnaround",
+    "turnarounds",
+    "maintenance",
+    "overhaul",
+    "restart",
+    "restarts",
+    "restarted",
+    "restarting",
+    "back online",
+    "resumed",
+    "resume",
+    "resuming",
+    "ramping",
+    "ramp up",
+    "power loss",
+    "power outage",
+    "power cut",
+    "force majeure",
+    "cut runs",
+    "run cuts",
+    "cut rates",
+    "reduced runs",
+    "halted",
+    "idled",
+    "damaged",
+    "attack",
+    "strike",
+)

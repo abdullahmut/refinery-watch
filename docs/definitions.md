@@ -102,10 +102,11 @@ An event is closed as of T if a `restart` row current as of T has `ends_event_id
 event's row or at any row in its `supersedes` chain. Otherwise it is open. A revision written after
 the restart is in the same chain, so the event stays closed.
 
-Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event_id` set to
-E1. The CDU goes down again on 20 Nov (E2). As of 21 Nov, E1 is closed and E2 is open. If instead
+Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event_id` set
+to E1. The CDU goes down again on 20 Nov (E2). As of 21 Nov, E1 is closed and E2 is open. If instead
 X1 were first reported on 25 Nov with the unit back on 10 Nov, it would still end E1, because E2
-started after 10 Nov. Under open decision 6, E2 goes to review while E1 is open, so X1 still ends E1.
+started after 10 Nov. Under open decision 6, E2 goes to review while E1 is open, so X1 still ends
+E1.
 
 ## Revisions
 
@@ -175,14 +176,16 @@ review of the restart and dedupe rules. Each needs a decision record before the 
 2. **Null start date.** "Remains shut, restart undecided" with no start. Options: reject; accept
    with `start_date` set to the publication date and a `start_unknown` flag. Leaning: accept,
    flagged. `known_at` is not affected either way. The record must also say whether a placeholder
-   `start_date` takes part in the 3-day dedupe window and in restart matching. Provisional answer: record 012.
+   `start_date` takes part in the 3-day dedupe window and in restart matching. Provisional answer:
+   record 012.
 3. **Reactivation of a closed plant.** A mothballed CDU returning is a `refinery.status` change,
    not a `restart`, by the rule above. Confirm this is what the note should show (as a reference
    change line, not in capacity returning). Provisional answer: record 013.
-4. **Partial sub-unit restarts with no figure.** Default: no row. Confirm. Provisional answer: record 013.
+4. **Partial sub-unit restarts with no figure.** Default: no row. Confirm. Provisional answer:
+   record 013.
 5. **Whole-plant restart with unit outages open.** "The refinery is back online" while named units
-   at that refinery are open. `ends_event_id` holds one id, so as written the restart matches only an
-   open whole-plant outage, and goes to review if there is none. The same applies in reverse: a
+   at that refinery are open. `ends_event_id` holds one id, so as written the restart matches only
+   an open whole-plant outage, and goes to review if there is none. The same applies in reverse: a
    unit restart never ends a whole-plant outage. Options: keep this; write one `restart` row per
    open unit; let a whole-plant restart close every open event at that refinery, which needs a
    different column than a single `ends_event_id`. Provisional answer: record 011.

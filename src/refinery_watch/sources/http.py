@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Final, Self
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -13,6 +14,10 @@ import httpx
 
 UA_TOKEN: Final = "refinery-watch"  # noqa: S105
 TIMEOUT: Final = httpx.Timeout(20.0, pool=5.0)
+MAX_RETRIES: Final = 3
+BACKOFF_S: Final = (30.0, 60.0, 120.0)
+MAX_RETRY_AFTER_S: Final = 300.0
+BLOCKING_STATUSES: Final = frozenset({401, 403, 451})
 MAX_BYTES: Final = 5_000_000
 MAX_REDIRECTS: Final = 5
 ALLOWED_PORTS: Final = (80, 443)
@@ -95,11 +100,23 @@ def _charset(content_type_header: str) -> str | None:
     return None
 
 
+RETRYABLE_FAILURES: Final = frozenset({"timeout", "network_error"})
+
+
 @dataclass(slots=True)
 class _Reply:
     status: int
     headers: httpx.Headers
     body: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _Stop:
+    """A request that ended without a usable reply."""
+
+    reason: str
+    status: int | None
+    block: bool
 
 
 class Fetcher:
@@ -188,6 +205,53 @@ class Fetcher:
             raise AddressRefused("non_public_address", url)
 
     def _send(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply:
+        outcome = self._attempts(url, params, accept)
+        if isinstance(outcome, _Stop):
+            if outcome.block:
+                self._blocked.add((urlsplit(url).hostname or "").lower())
+                raise HostBlocked(outcome.reason, url, outcome.status)
+            raise FetchError(outcome.reason, url, outcome.status)
+        return outcome
+
+    def _attempts(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply | _Stop:
+        for attempt in range(MAX_RETRIES + 1):
+            outcome = self._send_once(url, params, accept)
+            retry_after: float | None = None
+            if isinstance(outcome, _Reply):
+                if outcome.status in BLOCKING_STATUSES:
+                    return _Stop("http_status", outcome.status, True)
+                if outcome.status != 429 and outcome.status < 500:
+                    return outcome
+                status: int | None = outcome.status
+                retry_after = self._retry_after(outcome.headers.get("retry-after"))
+            elif outcome in RETRYABLE_FAILURES:
+                status = None
+            else:
+                return _Stop(outcome, None, False)
+            if retry_after is not None and retry_after > MAX_RETRY_AFTER_S:
+                return _Stop("retry_after_too_long", status, True)
+            if attempt == MAX_RETRIES:
+                return _Stop("retries_exhausted", status, True)
+            self._sleep(retry_after if retry_after is not None else BACKOFF_S[attempt])
+        raise AssertionError("unreachable")
+
+    def _retry_after(self, value: str | None) -> float | None:
+        if value is None:
+            return None
+        text = value.strip()
+        try:
+            return max(0.0, float(text))
+        except ValueError:
+            pass
+        try:
+            when = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return max(0.0, (when - self._now()).total_seconds())
+
+    def _send_once(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply | str:
         failure: str | None = None
         reply: _Reply | None = None
         try:
@@ -215,5 +279,5 @@ class Fetcher:
         except (httpx.InvalidURL, httpx.StreamError):
             failure = "bad_request"
         if reply is None:
-            raise FetchError(failure or "network_error", url)
+            return failure or "network_error"
         return reply

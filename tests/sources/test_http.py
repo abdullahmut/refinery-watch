@@ -1,6 +1,6 @@
 import httpx
 import pytest
-from tests.sources.helpers import EMAIL, T0, make_fetcher
+from tests.sources.helpers import EMAIL, T0, Handler, make_fetcher
 
 from refinery_watch.config import ConfigError, contact_email
 from refinery_watch.sources.http import (
@@ -8,6 +8,7 @@ from refinery_watch.sources.http import (
     AddressRefused,
     Fetcher,
     FetchError,
+    HostBlocked,
     strip_tracking,
     user_agent,
 )
@@ -185,3 +186,117 @@ def test_strip_tracking() -> None:
     )
     assert strip_tracking("https://a.example.com/p?utm_a=1") == "https://a.example.com/p"
     assert strip_tracking("https://a.example.com/p") == "https://a.example.com/p"
+
+
+def sequence(*replies: httpx.Response | Exception) -> Handler:
+    queue = list(replies)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        item = queue.pop(0) if len(queue) > 1 else queue[0]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    return handler
+
+
+def test_429_with_retry_after_seconds() -> None:
+    handler = sequence(httpx.Response(429, headers={"retry-after": "7"}), OK)
+    fetcher, net, clock = make_fetcher(handler)
+    assert fetcher.get("https://a.example.com/x").body == b"hello"
+    assert clock.waits == [7.0]
+    assert len(net.requests) == 2
+
+
+def test_429_with_retry_after_http_date() -> None:
+    date = "Tue, 10 Nov 2026 12:01:30 GMT"
+    handler = sequence(httpx.Response(429, headers={"retry-after": date}), OK)
+    fetcher, _, clock = make_fetcher(handler)
+    fetcher.get("https://a.example.com/x")
+    assert clock.waits == [90.0]
+
+
+def test_retry_after_in_the_past_waits_zero() -> None:
+    date = "Tue, 10 Nov 2026 11:00:00 GMT"
+    handler = sequence(httpx.Response(503, headers={"retry-after": date}), OK)
+    fetcher, _, clock = make_fetcher(handler)
+    fetcher.get("https://a.example.com/x")
+    assert clock.waits == [0.0]
+
+
+def test_long_retry_after_blocks_the_host() -> None:
+    fetcher, net, clock = make_fetcher(
+        sequence(httpx.Response(429, headers={"retry-after": "3600"}))
+    )
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/x")
+    assert clock.waits == []
+    assert fetcher.blocked_hosts() == {"a.example.com"}
+    sent = len(net.requests)
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/y")
+    assert len(net.requests) == sent
+
+
+def test_503_four_times_backs_off_then_blocks() -> None:
+    fetcher, net, clock = make_fetcher(sequence(httpx.Response(503)))
+    with pytest.raises(HostBlocked) as info:
+        fetcher.get("https://a.example.com/x")
+    assert clock.waits == [30.0, 60.0, 120.0]
+    assert len(net.requests) == 4
+    assert info.value.status == 503
+    assert "a.example.com" in fetcher.blocked_hosts()
+
+
+def test_unparseable_retry_after_uses_backoff() -> None:
+    handler = sequence(httpx.Response(429, headers={"retry-after": "soon"}), OK)
+    fetcher, _, clock = make_fetcher(handler)
+    fetcher.get("https://a.example.com/x")
+    assert clock.waits == [30.0]
+
+
+def test_connect_timeout_then_ok_retries_once() -> None:
+    fetcher, net, clock = make_fetcher(sequence(httpx.ConnectTimeout("t"), OK))
+    assert fetcher.get("https://a.example.com/x").status == 200
+    assert clock.waits == [30.0]
+    assert len(net.requests) == 2
+
+
+def test_connect_errors_exhaust_and_block() -> None:
+    fetcher, _, clock = make_fetcher(sequence(httpx.ConnectError("c")))
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/x")
+    assert clock.waits == [30.0, 60.0, 120.0]
+
+
+def test_403_blocks_host_and_other_hosts_still_work() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403) if request.url.host == "a.example.com" else OK
+
+    fetcher, net, clock = make_fetcher(handler)
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/x")
+    sent = len(net.requests)
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/y")
+    assert len(net.requests) == sent
+    assert fetcher.get("https://b.example.com/x").status == 200
+    assert clock.waits == []
+
+
+@pytest.mark.parametrize("status", [401, 451])
+def test_401_and_451_block_the_host(status: int) -> None:
+    fetcher, _, _ = make_fetcher(sequence(httpx.Response(status)))
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/x")
+
+
+@pytest.mark.parametrize("status", [400, 404, 410])
+def test_other_4xx_are_not_retried(status: int) -> None:
+    fetcher, net, clock = make_fetcher(sequence(httpx.Response(status)))
+    with pytest.raises(FetchError) as info:
+        fetcher.get("https://a.example.com/x")
+    assert not isinstance(info.value, HostBlocked)
+    assert len(net.requests) == 1
+    assert clock.waits == []
+    assert fetcher.blocked_hosts() == frozenset()

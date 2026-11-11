@@ -9,21 +9,13 @@ import yaml
 ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 COMPOSE_DIR: Final[Path] = ROOT / "infra" / "compose" / "data"
 EXPECTED_VARS: Final[frozenset[str]] = frozenset(
-    {
-        "POSTGRES_PASSWORD",
-        "PG_OWNER_PASSWORD",
-        "PG_APP_PASSWORD",
-        "MINIO_ROOT_USER",
-        "MINIO_ROOT_PASSWORD",
-        "MINIO_APP_ACCESS_KEY",
-        "MINIO_APP_SECRET_KEY",
-        "DATA_BIND_ADDR",
-    }
+    {"POSTGRES_PASSWORD", "PG_OWNER_PASSWORD", "PG_APP_PASSWORD", "DATA_BIND_ADDR"}
 )
 MEM_LIMITS_MIB: Final[dict[str, int]] = {"postgres": 384}
 VOLUMES: Final[frozenset[str]] = frozenset({"pgdata"})
 SERVICES: Final[frozenset[str]] = frozenset(MEM_LIMITS_MIB)
-FILES: Final[tuple[str, ...]] = ("compose.yaml",)
+FILES: Final[tuple[str, ...]] = ("compose.yaml", "compose.vpc.yaml")
+BIND_HOST: Final[str] = "${DATA_BIND_ADDR:?set DATA_BIND_ADDR to the data Droplet private IP}"
 PG_SETTINGS: Final[dict[str, str]] = {
     "shared_buffers": "96MB",
     "work_mem": "4MB",
@@ -127,6 +119,15 @@ def test_postgres_settings_fit_limit() -> None:
     assert services("compose.yaml")["postgres"]["stop_grace_period"] == "60s"
 
 
+def port_strings(name: str) -> list[tuple[str, str]]:
+    """Return (service, port) pairs for every published port in one file."""
+    return [
+        (service_name, str(port))
+        for service_name, service in services(name).items()
+        for port in service.get("ports", [])
+    ]
+
+
 def test_mounts_are_named_volumes_or_read_only_files() -> None:
     declared = set(load("compose.yaml")["volumes"])
     for name in FILES:
@@ -207,3 +208,15 @@ def test_roles_script() -> None:
     for word in ("SUPERUSER", "CREATEROLE", "CREATEDB", "BYPASSRLS"):
         assert word not in text
     assert not re.search(r"GRANT .* ON (ALL )?(TABLE|TABLES|SEQUENCES|SCHEMA)", text)
+
+
+def test_vpc_ports_need_bind_address() -> None:
+    assert port_strings("compose.vpc.yaml") == [("postgres", f"{BIND_HOST}:5432:5432")]
+
+
+def test_no_all_interfaces_bind() -> None:
+    for name in FILES:
+        for _, port in port_strings(name):
+            assert "0.0.0.0" not in port  # noqa: S104
+            assert "::" not in port.replace(BIND_HOST, "")
+            assert len(port.replace(BIND_HOST, "HOST").split(":")) >= 3, port

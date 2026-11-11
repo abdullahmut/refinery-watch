@@ -37,5 +37,3 @@ the same roles script and both targets.
 A green CI run means the triggers and functions were tested. An offline run on the laptop can pass
 with low coverage; CI cannot. A mistake costs one more migration. To change the skip rule, edit one
 fixture. To drop Alembic, the SQL in each migration moves to plain files as it is.
-
-Half a page. Plain English.

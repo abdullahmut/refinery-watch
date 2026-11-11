@@ -42,5 +42,3 @@ The unit never counts twice, and a refined products desk sees one figure per uni
 restart leaves the unit blocked, and every later outage on it waits in review until the operator
 writes the restart. A superuser can still disable the trigger; the app role cannot. To undo, drop
 the open-outage check from the trigger function in a new migration.
-
-Half a page. Plain English.

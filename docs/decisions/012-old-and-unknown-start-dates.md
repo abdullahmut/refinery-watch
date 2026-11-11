@@ -35,5 +35,3 @@ The note can say "start not stated" or "start date old, low confidence" next to 
 placeholder start can make a later restart look earlier than the outage it ends; matching uses the
 placeholder, so such a restart goes to review. To undo, stop writing the flags in validation. The
 columns can stay at false, or go in a later migration.
-
-Half a page. Plain English.

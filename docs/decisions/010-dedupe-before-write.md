@@ -42,5 +42,3 @@ A re-trip after a restart is a new outage, and two restarts of two outages stay 
 outage per unit (record 009) there is at most one candidate per named unit. If an unnamed report
 matches several open units, it goes to review. To undo, replace the two function bodies in a new
 migration.
-
-Half a page. Plain English.

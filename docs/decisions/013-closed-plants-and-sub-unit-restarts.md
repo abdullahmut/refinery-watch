@@ -34,5 +34,3 @@ edit to the local refinery file and the loader, so they lag the news by as long 
 takes. The schema already allows a capacity-null restart at low confidence, so changing decision 4
 later is a validation change only. To undo decision 3, stop reading the status change table in the
 note and route reactivations to review.
-
-Half a page. Plain English.

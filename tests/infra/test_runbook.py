@@ -27,7 +27,8 @@ def test_psql_runs_in_the_container_not_on_the_host() -> None:
 def test_rotation_passes_the_password_by_environment() -> None:
     text = "\n".join(lines())
     section = text.split("## Rotate a database password", 1)[1].split("\n## ", 1)[0]
-    assert "set -a; . ./.env; set +a" in section
+    assert "(\nset -a; . ./.env; set +a\n" in section
+    assert "SQL\n)\n" in section
     assert "exec -T -e PG_APP_PASSWORD -u postgres postgres psql" in section
     assert "\\getenv pw PG_APP_PASSWORD" in section
     assert "SET log_min_error_statement TO panic;" in section

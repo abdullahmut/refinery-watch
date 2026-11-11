@@ -248,7 +248,14 @@ free -m
 Recorded value: none yet.
 
 If the first init failed, the data volume now holds a cluster without roles and the script will
-not run again. On a Droplet with no data yet, run `docker compose ... down`, then
+not run again. On a Droplet with no data yet, first check that the database is empty. This must
+print `0`:
+
+```
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -u postgres postgres psql -d postgres -tAc "select count(*) from pg_database where datname='refinery_watch'"
+```
+
+If it prints anything else, stop. Then run `docker compose ... down`, then
 `docker volume rm refinery-watch-data_pgdata`, fix the cause and run `up` again. Never do this
 once the database holds data.
 
@@ -277,12 +284,14 @@ alone changes nothing inside Postgres.
 
 Likely cause: roles are created once, on an empty data volume.
 
-Edit `.env` first. Then load it into your shell and set the new password inside Postgres. The
+Edit `.env` first. Then load it in a subshell, so the passwords are gone from your shell when it
+ends, and set the new password inside Postgres. The
 value travels in the environment and on stdin. It is never in a command line, and the session does
 not log failed statements. Example for the app role, on the Droplet:
 
 ```
 cd /opt/refinery-watch
+(
 set -a; . ./.env; set +a
 docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -e PG_APP_PASSWORD -u postgres postgres psql -v ON_ERROR_STOP=1 -d postgres <<'SQL'
 SET log_min_error_statement TO panic;
@@ -290,6 +299,7 @@ SET log_min_error_statement TO panic;
 \getenv pw PG_APP_PASSWORD
 ALTER ROLE refinery_app PASSWORD :'pw';
 SQL
+)
 ```
 
 For the owner role, use `refinery_owner` and `PG_OWNER_PASSWORD` in both places. Then run the `up

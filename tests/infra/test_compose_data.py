@@ -430,3 +430,11 @@ def test_test_app_role_matches_production_app_role() -> None:
     assert [password.sub("PASSWORD x", s) for s in statements] == [
         password.sub("PASSWORD x", s) for s in expected
     ]
+
+
+def test_test_role_connection_limits_allow_schema_tests() -> None:
+    path = COMPOSE_DIR / "postgres" / "initdb-local" / "20-test-roles.sql"
+    text = path.read_text(encoding="utf-8")
+    limits = dict(re.findall(r"CREATE ROLE (\w+) .*CONNECTION LIMIT (\d+);", text))
+    assert int(limits["refinery_test_app"]) >= 3
+    assert int(limits["refinery_test_owner"]) >= 2

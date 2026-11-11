@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import psycopg
 import pytest
-from psycopg.rows import dict_row
+from tests.db.helpers import open_in_schema
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.db.migrate import upgrade
@@ -79,16 +79,6 @@ def make_schema(owner: str, app: str) -> str:
 def drop_schema(owner: str, name: str) -> None:
     with psycopg.connect(owner, autocommit=True) as conn:
         conn.execute(f"DROP SCHEMA {name} CASCADE")
-
-
-def open_in_schema(url: str, schema: str) -> Conn:
-    return psycopg.connect(
-        url,
-        row_factory=dict_row,
-        autocommit=False,
-        application_name="refinery-watch",
-        options=f"-c search_path={schema}",
-    )
 
 
 def seed_schema(owner: str, schema: str) -> None:
@@ -189,3 +179,12 @@ def fresh_db(fresh_schema: str, pg_server: str) -> Iterator[Conn]:
     yield conn
     conn.rollback()
     conn.close()
+
+
+@pytest.fixture
+def seeded_schema(pg_server: str, app_url: str) -> Iterator[str]:
+    """A private migrated and seeded schema, for tests that need committed rows."""
+    name = make_schema(pg_server, app_url)
+    seed_schema(pg_server, name)
+    yield name
+    drop_schema(pg_server, name)

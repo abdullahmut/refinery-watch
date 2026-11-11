@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import psycopg
 import pytest
-from tests.db.helpers import add_document, add_source, insert_outage, insert_raw_outage, ts
+from tests.db.helpers import add_document, add_source, insert_outage, insert_raw_outage, ts, unit_id
 
 from refinery_watch.db.connect import Conn
 
@@ -133,9 +133,13 @@ def test_row_checks(db: Conn, bad: dict[str, object]) -> None:
 def test_flag_combinations_that_are_allowed(db: Conn) -> None:
     variants: list[dict[str, object]] = [
         {"refinery_unit_id": None, "whole_plant": True},
-        {"start_unknown": True, "confidence": "medium"},
-        {"old_start": True, "confidence": "low"},
-        {"capacity_basis": "not_stated", "capacity_affected_kbd": None},
+        {"start_unknown": True, "confidence": "medium", "refinery_unit_id": unit_id(db)},
+        {"old_start": True, "confidence": "low", "refinery_unit_id": unit_id(db, code="VDU")},
+        {
+            "capacity_basis": "not_stated",
+            "capacity_affected_kbd": None,
+            "refinery_unit_id": unit_id(db, code="FCC"),
+        },
     ]
     for n, variant in enumerate(variants, start=1):
         event = insert_outage(db, known_at=ts(n), **variant)

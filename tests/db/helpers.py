@@ -3,6 +3,9 @@
 from datetime import UTC, date, datetime
 from typing import Any
 
+import psycopg
+from psycopg.rows import dict_row
+
 from refinery_watch.db.connect import Conn
 
 
@@ -144,3 +147,24 @@ def write(conn: Conn, **over: Any) -> int:
 
 def write_restart(conn: Conn, **over: Any) -> int:
     return sourced(conn, insert_restart(conn, **over))
+
+
+def assert_unit_exclusive(conn: Conn, times: list[datetime]) -> None:
+    """At every time, outage_as_of holds at most one row per unit key."""
+    for t in times:
+        rows = conn.execute(
+            "SELECT refinery_id, refinery_unit_id, count(*) AS n FROM outage_as_of(%s)"
+            " GROUP BY refinery_id, refinery_unit_id HAVING count(*) > 1",
+            (t,),
+        ).fetchall()
+        assert rows == [], f"two open rows for one unit at {t}"
+
+
+def open_in_schema(url: str, schema: str) -> Conn:
+    return psycopg.connect(
+        url,
+        row_factory=dict_row,
+        autocommit=False,
+        application_name="refinery-watch",
+        options=f"-c search_path={schema}",
+    )

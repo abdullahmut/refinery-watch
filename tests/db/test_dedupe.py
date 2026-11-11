@@ -144,3 +144,29 @@ def test_app_role_runs_the_lookups_and_public_cannot(db: Conn, app_db: Conn) -> 
         " 'restart_duplicate_of(text, bigint, date, timestamptz, boolean)', 'EXECUTE') AS p"
     ).fetchone()
     assert row == {"p": False}
+
+
+def test_late_report_of_a_closed_outage_is_the_same_event(db: Conn) -> None:
+    e1 = write(db, known_at=ts(1), start_date=day(1))
+    write_restart(db, known_at=ts(5), start_date=day(5))
+    assert outage_dup(db, 1, ts(7)) == [e1]
+    assert outage_dup(db, 3, ts(7)) == [e1]
+
+
+def test_report_on_or_after_the_restart_date_is_a_new_event(db: Conn) -> None:
+    write(db, known_at=ts(1), start_date=day(1))
+    write_restart(db, known_at=ts(5), start_date=day(5))
+    assert outage_dup(db, 5, ts(7)) == []
+    assert outage_dup(db, 6, ts(7)) == []
+
+
+def test_closed_chain_outside_the_window_is_not_a_match(db: Conn) -> None:
+    write(db, known_at=ts(1), start_date=day(1))
+    write_restart(db, known_at=ts(9), start_date=day(9))
+    assert outage_dup(db, 8, ts(10)) == []
+
+
+def test_closure_not_yet_known_leaves_the_chain_open_for_matching(db: Conn) -> None:
+    e1 = write(db, known_at=ts(1), start_date=day(1))
+    write_restart(db, known_at=ts(5), start_date=day(5))
+    assert outage_dup(db, 1, ts(4)) == [e1]

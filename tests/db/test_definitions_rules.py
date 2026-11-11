@@ -13,6 +13,7 @@ from tests.db.helpers import add_document, assert_unit_exclusive, day, ts, unit_
 from refinery_watch.dates import resolve_weekday
 from refinery_watch.db.connect import Conn
 from refinery_watch.db.events import (
+    Duplicate,
     NewEventRow,
     Review,
     SourceLink,
@@ -55,7 +56,7 @@ def restart(conn: Conn, d: int, known: int, unit: bool = True, **over: Any) -> N
     return outage(conn, d, known, unit, **fields)
 
 
-def put(conn: Conn, row: NewEventRow) -> Written | Review:
+def put(conn: Conn, row: NewEventRow) -> Written | Review | Duplicate:
     count = conn.execute("SELECT count(*) AS n FROM raw_document").fetchone()
     assert count is not None
     link = SourceLink(add_document(conn, int(count["n"]) + 1), "company_statement", "quoted text")

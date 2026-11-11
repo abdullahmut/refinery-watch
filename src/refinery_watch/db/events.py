@@ -32,6 +32,7 @@ ReviewReason = Literal[
     "ends_event_mismatch",
     "revision_after_restart_date",
     "restart_in_future",
+    "ambiguous_duplicate",
 ]
 
 REVIEW_SQLSTATES: Final[dict[str, ReviewReason]] = {
@@ -88,6 +89,14 @@ class Written:
 class Review:
     reason: ReviewReason
     detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class Duplicate:
+    """The report is already in the table. Its source was added as corroboration."""
+
+    chain_id: int
+    corroborated_event_id: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,9 +180,51 @@ def insert_event(conn: Conn, row: NewEventRow) -> Written:
     return Written(int(found["id"]), int(found["chain_id"]), found["ends_event_id"])
 
 
-def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | Review:
-    """Writes one row and its primary source in a savepoint. Rule failures return a Review."""
+def database_now(conn: Conn) -> datetime:
+    cursor = conn.execute("SELECT clock_timestamp() AS now")
+    now: datetime = require_row(cursor.fetchone())["now"]
+    return now
+
+
+def is_new_outage(row: NewEventRow) -> bool:
+    return row.supersedes is None and row.event_type != "restart"
+
+
+def corroborate(conn: Conn, chain_id: int, source: SourceLink) -> Duplicate:
+    """Links the source to the newest row of the chain. A document already linked is skipped."""
+    cursor = conn.execute("SELECT max(id) AS id FROM outage_event WHERE chain_id = %s", (chain_id,))
+    event_id = int(require_row(cursor.fetchone())["id"])
+    try:
+        with conn.transaction():
+            add_corroboration(conn, event_id, source)
+    except psycopg.errors.UniqueViolation:
+        pass
+    return Duplicate(chain_id, event_id)
+
+
+def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | Review | Duplicate:
+    """Writes one row and its primary source in a savepoint.
+
+    A new outage that matches existing chains, open or closed, is not written. One match returns
+    a Duplicate and the source is added as corroboration. Several matches return a Review.
+    Rule failures return a Review. Other database errors are raised.
+    """
     require_aware(row.known_at, "known_at")
+    if is_new_outage(row):
+        as_of = row.known_at or database_now(conn)
+        chains = outage_duplicate_of(
+            conn,
+            row.refinery_id,
+            row.refinery_unit_id,
+            row.whole_plant,
+            row.start_date,
+            row.start_unknown,
+            as_of,
+        )
+        if len(chains) > 1:
+            return Review("ambiguous_duplicate", f"matches chains {chains}")
+        if chains:
+            return corroborate(conn, chains[0], source)
     try:
         with conn.transaction():
             written = insert_event(conn, row)

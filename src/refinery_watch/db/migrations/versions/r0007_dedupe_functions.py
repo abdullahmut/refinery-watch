@@ -20,14 +20,20 @@ STATEMENTS = [
                                         p_whole_plant boolean, p_start_date date,
                                         p_start_unknown boolean, p_as_of timestamptz)
     RETURNS SETOF bigint LANGUAGE sql STABLE AS $$
-      SELECT DISTINCT o.chain_id FROM outage_as_of(p_as_of) o
-      WHERE o.refinery_id = p_refinery_id
-        AND ((p_whole_plant AND o.whole_plant)
-             OR (NOT p_whole_plant AND NOT o.whole_plant
-                 AND (o.refinery_unit_id = p_refinery_unit_id
-                      OR o.refinery_unit_id IS NULL
+      SELECT DISTINCT c.chain_id FROM outage_current_as_of(p_as_of) c
+      WHERE c.event_type IN ('unplanned','planned')
+        AND c.refinery_id = p_refinery_id
+        AND ((p_whole_plant AND c.whole_plant)
+             OR (NOT p_whole_plant AND NOT c.whole_plant
+                 AND (c.refinery_unit_id = p_refinery_unit_id
+                      OR c.refinery_unit_id IS NULL
                       OR p_refinery_unit_id IS NULL)))
-        AND (abs(o.start_date - p_start_date) <= 3 OR o.start_unknown OR p_start_unknown)
+        AND (abs(c.start_date - p_start_date) <= 3 OR c.start_unknown OR p_start_unknown)
+        AND NOT EXISTS (
+          SELECT 1 FROM outage_current_as_of(p_as_of) r
+          JOIN outage_event t ON t.id = r.ends_event_id
+          WHERE r.event_type = 'restart' AND t.chain_id = c.chain_id
+            AND r.start_date <= p_start_date)
       ORDER BY 1
     $$
     """,

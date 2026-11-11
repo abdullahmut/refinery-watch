@@ -10,6 +10,7 @@ from tests.db.helpers import add_document, day, ts, unit_id
 from refinery_watch.db import events
 from refinery_watch.db.connect import Conn
 from refinery_watch.db.events import (
+    Duplicate,
     NewEventRow,
     OutageRow,
     Review,
@@ -113,7 +114,7 @@ def test_review_reason_for_each_rule(app_db: Conn, scenario: str, reason: str) -
     elif scenario == "no_match":
         candidate = restart_row(app_db, refinery_id="R9003", refinery_unit_id=None, known_at=ts(3))
     elif scenario == "occupied":
-        candidate = new_row(app_db, known_at=ts(3))
+        candidate = new_row(app_db, known_at=ts(20), start_date=day(20))
     elif scenario == "refinery_change":
         candidate = new_row(
             app_db, supersedes=e1.id, known_at=ts(3), refinery_id="R9003", refinery_unit_id=None
@@ -180,7 +181,9 @@ def test_rw001_is_raised(app_db: Conn) -> None:
 
 def test_connection_stays_usable_after_a_review(app_db: Conn) -> None:
     first = must_write(app_db, new_row(app_db), 1)
-    review = write_event(app_db, new_row(app_db, known_at=ts(2)), link(app_db, 2))
+    review = write_event(
+        app_db, new_row(app_db, known_at=ts(2), start_date=day(20)), link(app_db, 2)
+    )
     assert isinstance(review, Review)
     again = must_write(
         app_db, new_row(app_db, known_at=ts(3), refinery_unit_id=None, whole_plant=True), 3
@@ -234,3 +237,69 @@ def test_corroboration_is_a_second_source(app_db: Conn) -> None:
     assert found == {"role": "corroboration"}
     with pytest.raises(psycopg.errors.UniqueViolation):
         add_corroboration(app_db, e1.id, replace(second, source_kind="regulator"))
+
+
+def test_late_report_of_a_closed_outage_is_a_duplicate_not_a_new_root(app_db: Conn) -> None:
+    e1 = must_write(app_db, new_row(app_db), 1)
+    must_write(app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), 2)
+    result = write_event(app_db, new_row(app_db, known_at=ts(7)), link(app_db, 3))
+    assert result == Duplicate(chain_id=e1.chain_id, corroborated_event_id=e1.id)
+    assert outage_as_of(app_db, ts(8)) == []
+    sources = app_db.execute(
+        "SELECT role FROM event_source WHERE outage_event_id = %s ORDER BY id", (e1.id,)
+    ).fetchall()
+    assert sources == [{"role": "primary"}, {"role": "corroboration"}]
+    roots = app_db.execute(
+        "SELECT count(*) AS n FROM outage_event WHERE event_type <> 'restart'"
+    ).fetchone()
+    assert roots == {"n": 1}
+
+
+def test_report_inside_the_window_of_an_open_chain_is_a_duplicate(app_db: Conn) -> None:
+    e1 = must_write(app_db, new_row(app_db), 1)
+    revised = must_write(app_db, new_row(app_db, supersedes=e1.id, known_at=ts(2)), 2)
+    result = write_event(
+        app_db, new_row(app_db, known_at=ts(3), start_date=day(2)), link(app_db, 3)
+    )
+    assert result == Duplicate(chain_id=e1.chain_id, corroborated_event_id=revised.id)
+
+
+def test_same_document_twice_is_still_a_duplicate(app_db: Conn) -> None:
+    first_link = link(app_db, 1)
+    e1 = write_event(app_db, new_row(app_db), first_link)
+    assert isinstance(e1, Written)
+    same = write_event(app_db, new_row(app_db, known_at=ts(2)), first_link)
+    assert isinstance(same, Duplicate)
+    assert same.chain_id == e1.chain_id
+
+
+def test_two_matching_chains_are_ambiguous(app_db: Conn) -> None:
+    must_write(app_db, new_row(app_db), 1)
+    must_write(
+        app_db, new_row(app_db, refinery_unit_id=unit_id(app_db, code="VDU"), known_at=ts(2)), 2
+    )
+    unnamed = new_row(app_db, refinery_unit_id=None, known_at=ts(3), start_date=day(2))
+    result = write_event(app_db, unnamed, link(app_db, 3))
+    assert isinstance(result, Review)
+    assert result.reason == "ambiguous_duplicate"
+
+
+def test_revisions_and_restarts_skip_the_duplicate_check(app_db: Conn) -> None:
+    e1 = must_write(app_db, new_row(app_db), 1)
+    revised = write_event(
+        app_db, new_row(app_db, supersedes=e1.id, known_at=ts(2)), link(app_db, 2)
+    )
+    assert isinstance(revised, Written)
+    restarted = write_event(
+        app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), link(app_db, 3)
+    )
+    assert isinstance(restarted, Written)
+
+
+def test_a_distinct_outage_on_an_open_unit_still_goes_to_review(app_db: Conn) -> None:
+    must_write(app_db, new_row(app_db), 1)
+    result = write_event(
+        app_db, new_row(app_db, known_at=ts(20), start_date=day(20)), link(app_db, 2)
+    )
+    assert isinstance(result, Review)
+    assert result.reason == "unit_has_open_outage"

@@ -31,14 +31,20 @@ variable "ssh_source_addresses" {
   validation {
     condition = (
       length(var.ssh_source_addresses) > 0 &&
-      alltrue([for a in var.ssh_source_addresses : try(cidrhost(a, 0) == split("/", a)[0], false)])
+      alltrue([
+        for a in var.ssh_source_addresses :
+        try(cidrhost(a, 0) == cidrhost("${split("/", a)[0]}/${strcontains(a, ":") ? 128 : 32}", 0), false)
+      ])
     )
     error_message = "ssh_source_addresses needs at least one entry. Each must be a CIDR with no host bits set."
   }
 
   validation {
-    condition     = var.allow_ssh_from_anywhere || !anytrue([for a in var.ssh_source_addresses : contains(["0.0.0.0/0", "::/0"], a)])
-    error_message = "0.0.0.0/0 and ::/0 need allow_ssh_from_anywhere = true."
+    condition = (
+      var.allow_ssh_from_anywhere ||
+      alltrue([for a in var.ssh_source_addresses : try(tonumber(split("/", a)[1]) >= (strcontains(a, ":") ? 32 : 8), false)])
+    )
+    error_message = "Prefixes shorter than /8 (IPv4) or /32 (IPv6) need allow_ssh_from_anywhere = true."
   }
 }
 

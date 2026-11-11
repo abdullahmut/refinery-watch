@@ -321,16 +321,40 @@ def test_ssh_public_key_validation() -> None:
         assert not matches(pattern, value), value
 
 
+def needs_anywhere_flag(cidr: str, v6_min: int, v4_min: int) -> bool:
+    """Mirrors the prefix rule in variables.tf for one entry."""
+    try:
+        prefix = int(cidr.split("/")[1])
+    except (IndexError, ValueError):
+        return True
+    return prefix < (v6_min if ":" in cidr else v4_min)
+
+
 def test_ssh_source_validation_blocks_anywhere_and_host_bits() -> None:
     declared = variables()
     flag = declared["allow_ssh_from_anywhere"]
     assert flag["type"] == "bool"
     assert flag["default"] is False
-    anywhere = condition_of("ssh_source_addresses", "allow_ssh_from_anywhere")
-    assert '"0.0.0.0/0"' in anywhere
-    assert '"::/0"' in anywhere
+    prefix_rule = condition_of("ssh_source_addresses", "allow_ssh_from_anywhere")
+    found = re.search(r"\? (\d+) : (\d+)\)", prefix_rule)
+    assert found
+    v6_min, v4_min = int(found.group(1)), int(found.group(2))
+    assert (v6_min, v4_min) == (32, 8)
+    for wide in [
+        "0.0.0.0/0",
+        "::/0",
+        "0.0.0.0/1",
+        "128.0.0.0/1",
+        "0.0.0.0/00",
+        "10.0.0.0/7",
+        "2001:db8::/31",
+        "junk",
+    ]:
+        assert needs_anywhere_flag(wide, v6_min, v4_min), wide
+    for narrow in ["203.0.113.10/32", "10.0.0.0/8", "2001:db8::/32", "2001:0db8::/32"]:
+        assert not needs_anywhere_flag(narrow, v6_min, v4_min), narrow
     host_bits = condition_of("ssh_source_addresses", "cidrhost")
-    assert 'split("/", a)[0]' in host_bits
+    assert 'cidrhost("${split("/", a)[0]}/${strcontains(a, ":") ? 128 : 32}", 0)' in host_bits
     assert "length(var.ssh_source_addresses) > 0" in host_bits
 
 

@@ -46,18 +46,46 @@ a 200 kb/d CDU is 80 kb/d affected.
 - `start_date`: the date the state changed, not the date it was reported. If only "last week"
   is given, use the Monday of that week and set `confidence` to at most `medium`.
 - `expected_restart_date`: as stated, or null. "Several weeks" is null, not a guess.
-- Weekday names resolve against the publication date: "Tuesday" in an article published on a
-  Thursday is the Tuesday two days before. "Next Tuesday" is the one after. "Mid-October" is the
-  15th; "early" and "late" are null.
+- Weekday names resolve against the publication date. The tense of the sentence sets the
+  direction.
+  - Past or present tense ("shut on Tuesday", "has been offline since Tuesday") resolves to the
+    most recent such day on or before the publication date. "Tuesday" in an article published on
+    a Thursday is the Tuesday two days before.
+  - Future tense ("plans to", "will", "expected to") resolves to the next such day on or after
+    the publication date. "Plans to restart on Wednesday" in an article published on a Thursday
+    is the Wednesday six days after.
+  - In both cases, a weekday that names the publication day resolves to the publication date
+    itself.
+  - "Next Tuesday" is the first Tuesday after the publication date, never the publication date
+    itself.
+  - If the tense is unclear, the row goes to review.
+- "Mid-October" is the 15th; "early" and "late" are null.
 - A restart that is announced ("plans to restart on Wednesday") is not a `restart` row. It is a
   revision: a new row that supersedes the open event and carries the new
   `expected_restart_date`. The `restart` row is written only when a source says the unit is back.
 - Dates must fall within 90 days either side of the publication date. Outside that, the row goes
   to review.
-- A `restart` row is a new row. It never writes to the event it ends. Whether an event is open or
-  closed is worked out at query time, not stored. An event is closed as of T if a `restart` row
-  for the same refinery and unit, known by T, matches it. Matching is by refinery and unit, with
-  the most recent open event winning. The match is applied at query time.
+
+## Restarts
+
+A `restart` row is a new row. It never writes to the event it ends. It carries `ends_event`, a
+new column: the id of the event row it ends. `ends_event` is set once, when the restart row is
+written, and is null on `unplanned` and `planned` rows.
+
+To set `ends_event`, look only at rows current at the restart's `known_at`. Of those, take the
+`unplanned` and `planned` rows for the same refinery and unit that are open at that time. The one
+with the latest `start_date` wins; a tie goes to the later `known_at`. If no event is open, the
+restart is not written to `outage_event`. It goes to review.
+
+Matching happens once, at write time. It never runs again at query time, so a later event cannot
+take an earlier restart.
+
+An event is closed as of T if a `restart` row current as of T has `ends_event` pointing at the
+event's row or at any row in its `supersedes` chain. Otherwise it is open. A revision written after
+the restart is in the same chain, so the event stays closed.
+
+Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event` set to
+E1. The CDU goes down again on 20 Nov (E2). As of 21 Nov, E1 is closed and E2 is open.
 
 ## Revisions
 
@@ -83,9 +111,16 @@ as capacity offline, until a news or company source confirms a throughput effect
 
 ## Dedupe
 
-Two extractions are the same event when the refinery matches, the unit matches (or one is null),
-and start dates are within 3 days. The row with the higher confidence is kept; the others are
-linked as corroboration. Corroboration count is what lifts `medium` to `high`.
+Two extractions are the same event when the event type matches, the refinery matches, the unit
+matches (or one is null), and start dates are within 3 days. Dedupe compares only rows of the same
+event type, so a shutdown and its own restart are never one event. The row with the higher
+confidence is kept; the others are linked as corroboration. Corroboration count is what lifts
+`medium` to `high`.
+
+Not settled: whether dedupe runs on extractions before they reach `outage_event`, or on rows
+already in it. If it runs after, "kept" and "linked" cannot mean changing or removing a row,
+because rows in `outage_event` are never updated or deleted. This needs a decision record before
+dedupe is coded.
 
 ## Regions
 
@@ -102,7 +137,9 @@ Found while labelling the first golden set. Each needs a decision record before 
    to 180 days. Leaning: allow with `low`, because the row is still true and a desk would rather
    see it flagged than not at all.
 2. **Null start date.** "Remains shut, restart undecided" with no start. Options: reject; accept
-   with `valid_from` = publication date and a `start_unknown` flag. Leaning: accept, flagged.
+   with `start_date` set to the publication date and a `start_unknown` flag. Leaning: accept,
+   flagged. `known_at` is not affected either way. The record must also say whether a placeholder
+   `start_date` takes part in the 3-day dedupe window and in restart matching.
 3. **Reactivation of a closed plant.** A mothballed CDU returning is a `refinery.status` change,
    not a `restart`, by the rule above. Confirm this is what the note should show (as a reference
    change line, not in capacity returning).

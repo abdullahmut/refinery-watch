@@ -15,3 +15,15 @@ required-version = ">=0.13.7"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/refinery_watch"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]

@@ -79,7 +79,12 @@ def _hash_known(conn: Conn, sha: str) -> bool:
 
 
 def store_document(
-    conn: Conn, store: RawStore, job_run_id: int, doc: NewDocument
+    conn: Conn,
+    store: RawStore,
+    job_run_id: int,
+    doc: NewDocument,
+    *,
+    in_same_tx: Callable[[int], None] | None = None,
 ) -> Stored | Skipped:
     _require_aware(doc.fetched_at, "fetched_at")
     if doc.published is not None:
@@ -116,6 +121,8 @@ def store_document(
                 ),
             ).fetchone()
             new_id = int(_returned(row)["id"])
+            if in_same_tx is not None:
+                in_same_tx(new_id)
     except psycopg.errors.UniqueViolation as exc:
         name = exc.diag.constraint_name or ""
         if not any(part in name for part in DUPLICATE_CONSTRAINTS):
@@ -262,7 +269,12 @@ PRICE_SCALE: Final = Decimal("0.0001")
 
 
 def write_prices(
-    conn: Conn, rows: Sequence[PriceRow], source_id: str, raw_document_id: int | None
+    conn: Conn,
+    rows: Sequence[PriceRow],
+    source_id: str,
+    raw_document_id: int | None,
+    *,
+    commit: bool = True,
 ) -> int:
     """Inserts rows that are new or differ from the latest known value. Never updates."""
     inserted = 0
@@ -281,5 +293,6 @@ def write_prices(
             (row.series, row.observed_on, value, row.unit, source_id, raw_document_id),
         )
         inserted += 1
-    conn.commit()
+    if commit:
+        conn.commit()
     return inserted

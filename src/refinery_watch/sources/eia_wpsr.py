@@ -120,6 +120,11 @@ def run(
     if not rows:
         return RunOutcome("failed", 0, 0, "no allowlisted series")
     content = normalised_content(rows)
+    written: list[int] = []
+
+    def write_in_same_transaction(document_id: int) -> None:
+        written.append(write_prices(conn, rows, SOURCE_ID, document_id, commit=False))
+
     result = store_document(
         conn,
         store,
@@ -137,8 +142,8 @@ def run(
             published=None,
             prefilter_terms=(),
         ),
+        in_same_tx=write_in_same_transaction,
     )
     if not isinstance(result, Stored):
         return RunOutcome("ok", len(rows), 0, "unchanged")
-    written = write_prices(conn, rows, SOURCE_ID, result.raw_document_id)
-    return RunOutcome("ok", len(rows), written, None)
+    return RunOutcome("ok", len(rows), written[0], None)

@@ -1,5 +1,6 @@
 """Checks the cloud-init templates by rendering them with sample values. No network."""
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Final
@@ -179,7 +180,9 @@ def test_deploy_user_has_passwordless_sudo(role: str) -> None:
 
 @pytest.mark.parametrize("role", ROLES)
 def test_write_files_are_mode_0644_and_include_docker_log_limits(role: str) -> None:
-    assert set(write_files(role)) >= {"/etc/docker/daemon.json"}
+    assert "/etc/docker/daemon.json" in write_files(role)
+    daemon = json.loads(written_file(role, "/etc/docker/daemon.json"))
+    assert daemon == {"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}
 
 
 @pytest.mark.parametrize("url", VALID_URLS)

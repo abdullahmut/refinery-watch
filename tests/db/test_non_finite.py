@@ -8,7 +8,7 @@ import pytest
 from tests.db.helpers import add_document, day, insert_raw_outage, ts, unit_id
 
 from refinery_watch.db.connect import Conn
-from refinery_watch.db.events import NewEventRow, SourceLink, write_event
+from refinery_watch.db.events import NewEventRow, Review, SourceLink, write_event
 from refinery_watch.db.seed import SeedError, load_refineries
 
 pytestmark = pytest.mark.integration
@@ -32,7 +32,7 @@ def test_capacity_affected_kbd(db: Conn, bad: str) -> None:
         insert_raw_outage(db, capacity_affected_kbd=Decimal(bad))
 
 
-def test_write_event_refuses_nan_capacity(db: Conn) -> None:
+def test_write_event_sends_nan_capacity_to_review(db: Conn) -> None:
     row = NewEventRow(
         "unplanned",
         "R9001",
@@ -46,8 +46,9 @@ def test_write_event_refuses_nan_capacity(db: Conn) -> None:
         known_at=ts(1),
     )
     link = SourceLink(add_document(db, 950), "company_statement", "q")
-    with pytest.raises(psycopg.Error):
-        write_event(db, row, link)
+    result = write_event(db, row, link)
+    assert isinstance(result, Review)
+    assert result.reason == "invalid_capacity"
 
 
 @pytest.mark.parametrize("bad", NON_FINITE)

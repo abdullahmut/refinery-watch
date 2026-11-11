@@ -33,6 +33,13 @@ ReviewReason = Literal[
     "revision_after_restart_date",
     "restart_in_future",
     "ambiguous_duplicate",
+    "restart_date_unknown",
+    "invalid_restart_fields",
+    "start_unknown_high_confidence",
+    "old_start_not_low",
+    "whole_plant_has_unit",
+    "invalid_capacity",
+    "match_score_out_of_range",
 ]
 
 REVIEW_SQLSTATES: Final[dict[str, ReviewReason]] = {
@@ -180,6 +187,55 @@ def insert_event(conn: Conn, row: NewEventRow) -> Written:
     return Written(int(found["id"]), int(found["chain_id"]), found["ends_event_id"])
 
 
+def invalid_capacity(row: NewEventRow) -> bool:
+    amount = row.capacity_affected_kbd
+    if (row.capacity_basis == "not_stated") != (amount is None):
+        return True
+    return amount is not None and not (amount.is_finite() and amount > 0)
+
+
+def validate(row: NewEventRow) -> Review | None:
+    """The row-level rules of docs/definitions.md, checked before any insert."""
+    is_restart = row.event_type == "restart"
+    checks: list[tuple[bool, ReviewReason, str]] = [
+        (is_restart and row.start_unknown, "restart_date_unknown", "a restart needs a known date"),
+        (
+            is_restart and (row.old_start or row.expected_restart_date is not None),
+            "invalid_restart_fields",
+            "a restart cannot carry old_start or an expected restart date",
+        ),
+        (
+            row.start_unknown and row.confidence == "high",
+            "start_unknown_high_confidence",
+            "an unknown start date cannot have high confidence",
+        ),
+        (
+            row.old_start and row.confidence != "low",
+            "old_start_not_low",
+            "an old start date must have low confidence",
+        ),
+        (
+            row.whole_plant and row.refinery_unit_id is not None,
+            "whole_plant_has_unit",
+            "a whole-plant row cannot name a unit",
+        ),
+        (
+            invalid_capacity(row),
+            "invalid_capacity",
+            "capacity must be a finite positive number exactly when its basis is stated",
+        ),
+        (
+            not 0 <= row.match_score <= 100,
+            "match_score_out_of_range",
+            "match_score must be between 0 and 100",
+        ),
+    ]
+    for failed, reason, detail in checks:
+        if failed:
+            return Review(reason, detail)
+    return None
+
+
 def database_now(conn: Conn) -> datetime:
     cursor = conn.execute("SELECT clock_timestamp() AS now")
     now: datetime = require_row(cursor.fetchone())["now"]
@@ -210,6 +266,9 @@ def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | R
     Rule failures return a Review. Other database errors are raised.
     """
     require_aware(row.known_at, "known_at")
+    invalid = validate(row)
+    if invalid is not None:
+        return invalid
     if is_new_outage(row):
         as_of = row.known_at or database_now(conn)
         chains = outage_duplicate_of(

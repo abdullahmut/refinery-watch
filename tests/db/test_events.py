@@ -303,3 +303,54 @@ def test_a_distinct_outage_on_an_open_unit_still_goes_to_review(app_db: Conn) ->
     )
     assert isinstance(result, Review)
     assert result.reason == "unit_has_open_outage"
+
+
+@pytest.mark.parametrize(
+    ("restart", "over", "reason"),
+    [
+        (True, {"start_unknown": True, "confidence": "medium"}, "restart_date_unknown"),
+        (True, {"start_unknown": True}, "restart_date_unknown"),
+        (True, {"expected_restart_date": date(2025, 11, 9)}, "invalid_restart_fields"),
+        (True, {"old_start": True, "confidence": "low"}, "invalid_restart_fields"),
+        (False, {"start_unknown": True, "confidence": "high"}, "start_unknown_high_confidence"),
+        (False, {"old_start": True, "confidence": "medium"}, "old_start_not_low"),
+        (False, {"old_start": True, "confidence": "high"}, "old_start_not_low"),
+        (False, {"whole_plant": True}, "whole_plant_has_unit"),
+        (False, {"capacity_basis": "not_stated"}, "invalid_capacity"),
+        (False, {"capacity_affected_kbd": None}, "invalid_capacity"),
+        (False, {"capacity_affected_kbd": Decimal(0)}, "invalid_capacity"),
+        (False, {"capacity_affected_kbd": Decimal("NaN")}, "invalid_capacity"),
+        (False, {"capacity_affected_kbd": Decimal("Infinity")}, "invalid_capacity"),
+        (False, {"match_score": 101}, "match_score_out_of_range"),
+        (False, {"match_score": -1}, "match_score_out_of_range"),
+    ],
+)
+def test_invalid_rows_return_a_review_and_write_nothing(
+    app_db: Conn, restart: bool, over: dict[str, Any], reason: str
+) -> None:
+    make = restart_row if restart else new_row
+    if restart:
+        must_write(app_db, new_row(app_db), 1)
+    before = app_db.execute("SELECT count(*) AS n FROM outage_event").fetchone()
+    result = write_event(
+        app_db, make(app_db, known_at=ts(5), start_date=day(5), **over), link(app_db, 9)
+    )
+    assert isinstance(result, Review)
+    assert result.reason == reason
+    assert result.detail
+    after = app_db.execute("SELECT count(*) AS n FROM outage_event").fetchone()
+    assert before == after
+
+
+def test_valid_low_confidence_flags_are_written(app_db: Conn) -> None:
+    unknown = new_row(app_db, start_unknown=True, confidence="low", known_at=ts(1))
+    assert isinstance(write_event(app_db, unknown, link(app_db, 1)), Written)
+    old = new_row(
+        app_db,
+        refinery_unit_id=unit_id(app_db, code="VDU"),
+        old_start=True,
+        confidence="low",
+        known_at=ts(2),
+        start_date=day(1),
+    )
+    assert isinstance(write_event(app_db, old, link(app_db, 2)), Written)

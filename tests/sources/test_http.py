@@ -1,6 +1,8 @@
+from datetime import timedelta
+
 import httpx
 import pytest
-from tests.sources.helpers import EMAIL, T0, Handler, make_fetcher
+from tests.sources.helpers import EMAIL, T0, Clock, Handler, make_fetcher
 
 from refinery_watch.config import ConfigError, contact_email
 from refinery_watch.sources.http import (
@@ -50,7 +52,7 @@ def test_result_fields() -> None:
     assert result.content_type == "text/html"
     assert result.charset == "utf-8"
     assert result.body == b"hello"
-    assert result.fetched_at == T0
+    assert result.fetched_at == T0 + timedelta(seconds=5)
 
 
 def test_params_are_sent_but_not_returned_in_url() -> None:
@@ -189,6 +191,11 @@ def test_strip_tracking() -> None:
     assert strip_tracking("https://a.example.com/p") == "https://a.example.com/p"
 
 
+def retry_waits(clock: Clock) -> list[float]:
+    """Waits after the first request's 5 s spacing from the robots request."""
+    return clock.waits[1:]
+
+
 def sequence(*replies: httpx.Response | Exception) -> Handler:
     queue = list(replies)
 
@@ -205,16 +212,16 @@ def test_429_with_retry_after_seconds() -> None:
     handler = sequence(httpx.Response(429, headers={"retry-after": "7"}), OK)
     fetcher, net, clock = make_fetcher(handler)
     assert fetcher.get("https://a.example.com/x").body == b"hello"
-    assert clock.waits == [7.0]
+    assert retry_waits(clock) == [7.0]
     assert len(net.requests) == 2
 
 
 def test_429_with_retry_after_http_date() -> None:
-    date = "Tue, 10 Nov 2026 12:01:30 GMT"
+    date = "Tue, 10 Nov 2026 12:01:35 GMT"
     handler = sequence(httpx.Response(429, headers={"retry-after": date}), OK)
     fetcher, _, clock = make_fetcher(handler)
     fetcher.get("https://a.example.com/x")
-    assert clock.waits == [90.0]
+    assert retry_waits(clock) == [90.0]
 
 
 def test_retry_after_in_the_past_waits_zero() -> None:
@@ -222,7 +229,7 @@ def test_retry_after_in_the_past_waits_zero() -> None:
     handler = sequence(httpx.Response(503, headers={"retry-after": date}), OK)
     fetcher, _, clock = make_fetcher(handler)
     fetcher.get("https://a.example.com/x")
-    assert clock.waits == [0.0]
+    assert retry_waits(clock) == [0.0, 5.0]
 
 
 def test_long_retry_after_blocks_the_host() -> None:
@@ -231,7 +238,7 @@ def test_long_retry_after_blocks_the_host() -> None:
     )
     with pytest.raises(HostBlocked):
         fetcher.get("https://a.example.com/x")
-    assert clock.waits == []
+    assert retry_waits(clock) == []
     assert fetcher.blocked_hosts() == {"a.example.com"}
     sent = len(net.requests)
     with pytest.raises(HostBlocked):
@@ -243,7 +250,7 @@ def test_503_four_times_backs_off_then_blocks() -> None:
     fetcher, net, clock = make_fetcher(sequence(httpx.Response(503)))
     with pytest.raises(HostBlocked) as info:
         fetcher.get("https://a.example.com/x")
-    assert clock.waits == [30.0, 60.0, 120.0]
+    assert retry_waits(clock) == [30.0, 60.0, 120.0]
     assert len(net.requests) == 4
     assert info.value.status == 503
     assert "a.example.com" in fetcher.blocked_hosts()
@@ -253,13 +260,13 @@ def test_unparseable_retry_after_uses_backoff() -> None:
     handler = sequence(httpx.Response(429, headers={"retry-after": "soon"}), OK)
     fetcher, _, clock = make_fetcher(handler)
     fetcher.get("https://a.example.com/x")
-    assert clock.waits == [30.0]
+    assert retry_waits(clock) == [30.0]
 
 
 def test_connect_timeout_then_ok_retries_once() -> None:
     fetcher, net, clock = make_fetcher(sequence(httpx.ConnectTimeout("t"), OK))
     assert fetcher.get("https://a.example.com/x").status == 200
-    assert clock.waits == [30.0]
+    assert retry_waits(clock) == [30.0]
     assert len(net.requests) == 2
 
 
@@ -267,7 +274,7 @@ def test_connect_errors_exhaust_and_block() -> None:
     fetcher, _, clock = make_fetcher(sequence(httpx.ConnectError("c")))
     with pytest.raises(HostBlocked):
         fetcher.get("https://a.example.com/x")
-    assert clock.waits == [30.0, 60.0, 120.0]
+    assert retry_waits(clock) == [30.0, 60.0, 120.0]
 
 
 def test_403_blocks_host_and_other_hosts_still_work() -> None:
@@ -282,7 +289,7 @@ def test_403_blocks_host_and_other_hosts_still_work() -> None:
         fetcher.get("https://a.example.com/y")
     assert len(net.requests) == sent
     assert fetcher.get("https://b.example.com/x").status == 200
-    assert clock.waits == []
+    assert clock.waits == [5.0, 5.0]
 
 
 @pytest.mark.parametrize("status", [401, 451])
@@ -299,7 +306,7 @@ def test_other_4xx_are_not_retried(status: int) -> None:
         fetcher.get("https://a.example.com/x")
     assert not isinstance(info.value, HostBlocked)
     assert len(net.requests) == 1
-    assert clock.waits == []
+    assert retry_waits(clock) == []
     assert fetcher.blocked_hosts() == frozenset()
 
 
@@ -399,3 +406,53 @@ def test_robots_applies_to_query_paths() -> None:
     with pytest.raises(RobotsDisallowed):
         fetcher.get("https://a.example.com/rss?feed=news")
     assert net.requests == []
+
+
+def test_crawl_delay_is_honoured() -> None:
+    robots = robots_text("User-agent: *\nCrawl-delay: 12")
+    fetcher, _, clock = make_fetcher(lambda r: OK, robots=robots)
+    fetcher.get("https://a.example.com/x")
+    fetcher.get("https://a.example.com/y")
+    assert clock.waits == [12.0, 12.0]
+
+
+def test_no_crawl_delay_waits_the_remainder_of_five_seconds() -> None:
+    fetcher, _, clock = make_fetcher(lambda r: OK)
+    fetcher.get("https://a.example.com/x")
+    assert clock.waits == [5.0]
+    clock.t += 1.0
+    fetcher.get("https://a.example.com/y")
+    assert clock.waits == [5.0, 4.0]
+
+
+def test_no_wait_when_the_gap_has_passed() -> None:
+    fetcher, _, clock = make_fetcher(lambda r: OK)
+    fetcher.get("https://a.example.com/x")
+    clock.t += 60.0
+    fetcher.get("https://a.example.com/y")
+    assert clock.waits == [5.0]
+
+
+def test_two_hosts_do_not_wait_for_each_other() -> None:
+    fetcher, _, clock = make_fetcher(lambda r: OK)
+    fetcher.get("https://a.example.com/x")
+    fetcher.get("https://b.example.com/x")
+    assert clock.waits == [5.0, 5.0]
+
+
+def test_the_robots_request_counts_as_a_request() -> None:
+    fetcher, net, clock = make_fetcher(lambda r: OK)
+    fetcher.get("https://a.example.com/x")
+    assert len(net.robots_requests) == 1
+    assert clock.waits == [5.0]
+
+
+def test_redirect_hops_to_one_host_are_spaced() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": "/b"})
+        return OK
+
+    fetcher, _, clock = make_fetcher(handler)
+    fetcher.get("https://a.example.com/a")
+    assert clock.waits == [5.0, 5.0]

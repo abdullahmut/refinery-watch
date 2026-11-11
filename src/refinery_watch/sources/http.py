@@ -15,6 +15,7 @@ import httpx
 
 UA_TOKEN: Final = "refinery-watch"  # noqa: S105
 TIMEOUT: Final = httpx.Timeout(20.0, pool=5.0)
+MIN_HOST_GAP_S: Final = 5.0
 MAX_RETRIES: Final = 3
 BACKOFF_S: Final = (30.0, 60.0, 120.0)
 MAX_RETRY_AFTER_S: Final = 300.0
@@ -150,6 +151,8 @@ class Fetcher:
         self._now = now
         self._blocked: set[str] = set()
         self._robots: dict[str, _Robots] = {}
+        self._crawl_delay: dict[str, float] = {}
+        self._last_start: dict[str, float] = {}
 
     def blocked_hosts(self) -> frozenset[str]:
         return frozenset(self._blocked)
@@ -231,6 +234,9 @@ class Fetcher:
                 parser.parse(outcome.body.decode("utf-8", errors="replace").splitlines())
             else:
                 parser.parse([])
+            delay = parser.crawl_delay(UA_TOKEN)
+            if delay is not None:
+                self._crawl_delay[(urlsplit(origin).hostname or "").lower()] = float(delay)
             return _Robots(parser)
         return _Robots(None)
 
@@ -265,6 +271,16 @@ class Fetcher:
             self._sleep(retry_after if retry_after is not None else BACKOFF_S[attempt])
         raise AssertionError("unreachable")
 
+    def _space(self, url: str) -> None:
+        host = (urlsplit(url).hostname or "").lower()
+        gap = max(MIN_HOST_GAP_S, self._crawl_delay.get(host, 0.0))
+        last = self._last_start.get(host)
+        if last is not None:
+            wait = gap - (self._monotonic() - last)
+            if wait > 0:
+                self._sleep(wait)
+        self._last_start[host] = self._monotonic()
+
     def _retry_after(self, value: str | None) -> float | None:
         if value is None:
             return None
@@ -282,6 +298,7 @@ class Fetcher:
         return max(0.0, (when - self._now()).total_seconds())
 
     def _send_once(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply | str:
+        self._space(url)
         failure: str | None = None
         reply: _Reply | None = None
         try:

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 
@@ -99,3 +100,25 @@ class FakeStore:
             self.on_put(key)
         self.objects[key] = data
         self.types[key] = content_type
+
+
+HANDMADE = Path(__file__).resolve().parents[1] / "fixtures" / "sources" / "handmade"
+
+
+def sample_bytes(name: str) -> bytes:
+    return (HANDMADE / name).read_bytes()
+
+
+def html_response(name: str) -> httpx.Response:
+    return httpx.Response(
+        200, content=sample_bytes(name), headers={"content-type": "text/html; charset=utf-8"}
+    )
+
+
+def never(text: str) -> tuple[str, ...]:
+    return ()
+
+
+def shut_matcher(text: str) -> tuple[str, ...]:
+    """A stand-in term matcher: passes any text with the word shut."""
+    return ("shut",) if "shut" in text else ()

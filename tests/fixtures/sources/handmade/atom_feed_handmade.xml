@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Invented Atom feed</title>
+  <id>urn:example:handmade-atom</id>
+  <updated>2026-11-10T12:00:00Z</updated>
+  <entry>
+    <title>Hand-made entry</title>
+    <id>urn:example:handmade-atom:1</id>
+    <link href="https://hp.example.com/news/atom-entry"/>
+    <updated>2026-11-10T12:00:00Z</updated>
+  </entry>
+</feed>

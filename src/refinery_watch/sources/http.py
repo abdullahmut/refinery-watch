@@ -154,6 +154,9 @@ class Fetcher:
         self._crawl_delay: dict[str, float] = {}
         self._last_start: dict[str, float] = {}
 
+    def monotonic(self) -> float:
+        return self._monotonic()
+
     def blocked_hosts(self) -> frozenset[str]:
         return frozenset(self._blocked)
 

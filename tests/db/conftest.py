@@ -3,6 +3,7 @@
 import os
 import secrets
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from urllib.parse import urlparse
 
 import psycopg
@@ -10,12 +11,14 @@ import pytest
 
 from refinery_watch.db.connect import Conn, connect
 from refinery_watch.db.migrate import upgrade
+from refinery_watch.db.seed import load_refineries, load_sources
 
 OWNER_URL = (
     "postgresql://refinery_test_owner:refinery_test_owner@127.0.0.1:5432/refinery_watch_test"
 )
 APP_URL = "postgresql://refinery_test_app:refinery_test_app@127.0.0.1:5432/refinery_watch_test"
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+SEED_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "seed"
 NOT_REACHABLE = "Postgres not reachable on 127.0.0.1:5432. Run make up."
 
 
@@ -83,9 +86,28 @@ def open_in_schema(url: str, schema: str) -> Conn:
     return conn
 
 
+def seed_schema(owner: str, schema: str) -> None:
+    """Loads the small fixtures, one fixture source and R9001's CDU capacity, and commits."""
+    with open_in_schema(owner, schema) as conn:
+        load_sources(conn, SEED_DIR / "sources_small.csv")
+        load_refineries(conn, SEED_DIR / "refineries_small.csv")
+        conn.execute(
+            "INSERT INTO source (id, name, tier, region_focus, access_method, feed_url,"
+            " article_url_pattern, robots_status, fetch_interval_min)"
+            " VALUES ('fixture_src', 'Fixture source', 2, 'Global', 'rss',"
+            " 'https://example.test/feed', 'https://example.test/<id>', 'open', 60)"
+        )
+        conn.execute(
+            "UPDATE refinery_unit SET capacity_kbd = 200"
+            " WHERE refinery_id = 'R9001' AND unit_code = 'CDU'"
+        )
+        conn.commit()
+
+
 @pytest.fixture(scope="session")
 def session_schema(pg_server: str, app_url: str) -> Iterator[str]:
     name = make_schema(pg_server, app_url)
+    seed_schema(pg_server, name)
     yield name
     drop_schema(pg_server, name)
 

@@ -21,7 +21,7 @@ GRANTS = {
 
 def add_refinery(db: Conn, **over: Any) -> None:
     row: dict[str, Any] = {
-        "id": "R9001",
+        "id": "R9501",
         "name": "Test Plant",
         "country": "US",
         "region": "US Gulf",
@@ -60,15 +60,15 @@ def test_refinery_checks(db: Conn, bad: dict[str, Any]) -> None:
 
 def test_unit_code_check_and_uniqueness(db: Conn) -> None:
     add_refinery(db)
-    db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9001', 'CDU')")
+    db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9501', 'CDU')")
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
-        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9001', 'XYZ')")
+        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9501', 'XYZ')")
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
-        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9001', 'UTIL')")
+        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9501', 'UTIL')")
     with pytest.raises(psycopg.errors.UniqueViolation), db.transaction():
-        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9001', 'CDU')")
+        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9501', 'CDU')")
     db.execute(
-        "INSERT INTO refinery_unit (refinery_id, unit_code, unit_tag) VALUES ('R9001', 'CDU', '2')"
+        "INSERT INTO refinery_unit (refinery_id, unit_code, unit_tag) VALUES ('R9501', 'CDU', '2')"
     )
 
 
@@ -84,12 +84,14 @@ def test_unit_codes_match_unit_product_map(db: Conn) -> None:
     for code in sorted(codes):
         with db.transaction():
             db.execute(
-                "INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9001', %s)", (code,)
+                "INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9501', %s)", (code,)
             )
-    count = db.execute("SELECT count(*) AS n FROM refinery_unit").fetchone()
+    count = db.execute(
+        "SELECT count(*) AS n FROM refinery_unit WHERE refinery_id = 'R9501'"
+    ).fetchone()
     assert count == {"n": len(codes)}
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
-        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9001', 'ZZZ')")
+        db.execute("INSERT INTO refinery_unit (refinery_id, unit_code) VALUES ('R9501', 'ZZZ')")
 
 
 def test_status_change_must_differ(db: Conn) -> None:
@@ -97,7 +99,7 @@ def test_status_change_must_differ(db: Conn) -> None:
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
         db.execute(
             "INSERT INTO refinery_status_change (refinery_id, old_status, new_status)"
-            " VALUES ('R9001', 'operating', 'operating')"
+            " VALUES ('R9501', 'operating', 'operating')"
         )
 
 

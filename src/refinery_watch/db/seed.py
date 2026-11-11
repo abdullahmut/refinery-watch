@@ -5,12 +5,14 @@ import csv
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import psycopg
 
-from refinery_watch.config import ConfigError, database_url
+from refinery_watch.config import ConfigError, database_url, refineries_csv_path
 from refinery_watch.db.connect import Conn, connect
 
 Row = dict[str, Any]
@@ -30,6 +32,26 @@ SOURCE_COLUMNS = (
     "verified",
 )
 SOURCE_VALUE_COLUMNS = SOURCE_COLUMNS[1:]
+
+REFINERY_COLUMNS = (
+    "refinery_id",
+    "name",
+    "aliases",
+    "country",
+    "region",
+    "owner",
+    "nameplate_kbd",
+    "major_units",
+    "status",
+    "source_url",
+    "verified",
+    "verified_on",
+    "notes",
+)
+REFINERY_VALUE_COLUMNS = REFINERY_COLUMNS[1:7] + REFINERY_COLUMNS[8:]
+UNIT_CODES = frozenset(
+    {"CDU", "VDU", "FCC", "HCU", "COK", "REF", "HDT_D", "HDT_G", "ALK", "ISOM", "SRU", "H2", "RHU"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,15 +175,141 @@ def load_sources(conn: Conn, path: Path) -> LoadResult:
     return tally(outcomes, missing)
 
 
+def split_list(value: str) -> list[str]:
+    return [token.strip() for token in value.split(";") if token.strip()]
+
+
+def blank_to_none(value: str) -> str | None:
+    return value or None
+
+
+def parse_decimal(path: Path, line: int, column: str, value: str) -> Decimal | None:
+    if not value:
+        return None
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        raise fail(path, line, column, f"must be a number, got {value!r}") from None
+
+
+def parse_date(path: Path, line: int, column: str, value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise fail(path, line, column, f"must be YYYY-MM-DD, got {value!r}") from None
+
+
+def parse_refinery(path: Path, line: int, raw: dict[str, str]) -> Row:
+    return {
+        "id": raw["refinery_id"],
+        "name": raw["name"],
+        "aliases": split_list(raw["aliases"]),
+        "country": raw["country"],
+        "region": raw["region"],
+        "owner": blank_to_none(raw["owner"]),
+        "nameplate_kbd": parse_decimal(path, line, "nameplate_kbd", raw["nameplate_kbd"]),
+        "status": raw["status"],
+        "source_url": blank_to_none(raw["source_url"]),
+        "verified": parse_yes_no(path, line, "verified", raw["verified"]),
+        "verified_on": parse_date(path, line, "verified_on", raw["verified_on"]),
+        "notes": blank_to_none(raw["notes"]),
+        "units": split_list(raw["major_units"]),
+    }
+
+
+def bad_unit_errors(path: Path, rows: Sequence[tuple[int, dict[str, str]]]) -> list[str]:
+    """Lists every major_units token that is not a unit code, with its line and refinery."""
+    problems: list[str] = []
+    for line, raw in rows:
+        bad = [t for t in split_list(raw["major_units"]) if t not in UNIT_CODES]
+        if bad:
+            tokens = ", ".join(repr(t) for t in bad)
+            problems.append(
+                f"{path.name}:{line}: column major_units: {raw['refinery_id']} has {tokens}"
+            )
+    return problems
+
+
+def upsert_refinery(conn: Conn, row: Row) -> str:
+    """Returns 'inserted', 'updated' or 'unchanged'. Logs a status change."""
+    found = conn.execute("SELECT * FROM refinery WHERE id = %(id)s", row).fetchone()
+    if found is None:
+        conn.execute(
+            "INSERT INTO refinery (id, name, aliases, country, region, owner, nameplate_kbd,"
+            " status, source_url, verified, verified_on, notes)"
+            " VALUES (%(id)s, %(name)s, %(aliases)s, %(country)s, %(region)s, %(owner)s,"
+            " %(nameplate_kbd)s, %(status)s, %(source_url)s, %(verified)s, %(verified_on)s,"
+            " %(notes)s)",
+            row,
+        )
+        return "inserted"
+    if all(found[c] == row[c] for c in REFINERY_VALUE_COLUMNS):
+        return "unchanged"
+    conn.execute(
+        "UPDATE refinery SET name = %(name)s, aliases = %(aliases)s, country = %(country)s,"
+        " region = %(region)s, owner = %(owner)s, nameplate_kbd = %(nameplate_kbd)s,"
+        " status = %(status)s, source_url = %(source_url)s, verified = %(verified)s,"
+        " verified_on = %(verified_on)s, notes = %(notes)s, loaded_at = now()"
+        " WHERE id = %(id)s",
+        row,
+    )
+    if found["status"] != row["status"]:
+        conn.execute(
+            "INSERT INTO refinery_status_change (refinery_id, old_status, new_status)"
+            " VALUES (%s, %s, %s)",
+            (row["id"], found["status"], row["status"]),
+        )
+    return "updated"
+
+
+def add_units(conn: Conn, refinery_id: str, codes: Sequence[str]) -> int:
+    """Inserts missing unit rows with an empty tag. Returns how many were new."""
+    added = 0
+    for code in codes:
+        cur = conn.execute(
+            "INSERT INTO refinery_unit (refinery_id, unit_code, unit_tag)"
+            " VALUES (%s, %s, '') ON CONFLICT (refinery_id, unit_code, unit_tag) DO NOTHING",
+            (refinery_id, code),
+        )
+        added += cur.rowcount
+    return added
+
+
+def load_refineries(conn: Conn, path: Path) -> LoadResult:
+    rows = read_rows(path, REFINERY_COLUMNS)
+    problems = bad_unit_errors(path, rows)
+    if problems:
+        raise SeedError("; ".join(problems))
+    parsed = [(line, parse_refinery(path, line, raw)) for line, raw in rows]
+    outcomes: list[str] = []
+    with conn.transaction():
+        for line, row in parsed:
+            try:
+                with conn.transaction():
+                    outcome = upsert_refinery(conn, row)
+                    if add_units(conn, row["id"], row["units"]) and outcome == "unchanged":
+                        outcome = "updated"
+                    outcomes.append(outcome)
+            except psycopg.Error as exc:
+                raise database_error(path, line, exc) from exc
+        missing = missing_ids(conn, "refinery", [row["id"] for _, row in parsed])
+    return tally(outcomes, missing)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="refinery_watch.db.seed")
     commands = parser.add_subparsers(dest="command", required=True)
     sources = commands.add_parser("sources")
     sources.add_argument("--csv", type=Path, default=Path("data/sources.csv"))
+    commands.add_parser("refineries")
     args = parser.parse_args(argv)
     try:
+        path = args.csv if args.command == "sources" else refineries_csv_path()
+        loader = load_sources if args.command == "sources" else load_refineries
         with connect(database_url()) as conn:
-            result = load_sources(conn, args.csv)
+            result = loader(conn, path)
             conn.commit()
     except (ConfigError, SeedError, OSError) as exc:
         sys.stderr.write(f"seed: {exc}\n")

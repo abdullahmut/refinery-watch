@@ -12,11 +12,19 @@ from tests.sources.helpers import FakeStore, html_response, make_fetcher, sample
 from refinery_watch.db.connect import Conn
 from refinery_watch.sources import eia_wpsr, gdelt_doc, hp_rss
 from refinery_watch.sources.pages import fetch_page
-from refinery_watch.sources.store import RunOutcome, finish_run
+from refinery_watch.sources.store import RunNotRunning, RunOutcome, finish_run, start_run
 
 pytestmark = pytest.mark.integration
 
 EIA_URL = "https://eia.example.com/v2/petroleum/pnp/wiup/data/"
+
+
+@pytest.fixture
+def owner(seeded_schema: str, pg_server: str) -> Iterator[Conn]:
+    conn = open_in_schema(pg_server, seeded_schema)
+    yield conn
+    conn.rollback()
+    conn.close()
 
 
 @pytest.fixture
@@ -158,3 +166,51 @@ def test_one_bad_page_does_not_abort_the_hp_run(app: Conn, monkeypatch: pytest.M
     )
     assert (outcome.status, outcome.rows_out) == ("ok", 1)
     assert outcome.note == "parse_error=1"
+
+
+def test_finish_of_a_swept_run_is_not_silently_dropped(app: Conn, owner: Conn) -> None:
+    job = "fetch_hp_news"
+    first = start_run(app, job, 1)
+    assert first is not None
+    owner.execute(
+        "UPDATE job_run SET started_at = clock_timestamp() - interval '41 minutes' WHERE id = %s",
+        (first,),
+    )
+    owner.commit()
+    second = start_run(app, job, 1)
+    assert second is not None
+    with pytest.raises(RunNotRunning):
+        finish_run(app, first, RunOutcome("ok", 5, 5, None))
+    row = app.execute("SELECT status FROM job_run WHERE id = %s", (first,)).fetchone()
+    assert row is not None
+    assert row["status"] == "failed"
+
+
+def test_cli_exits_1_when_the_run_row_was_lost(
+    seeded_schema: str, app_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from urllib.parse import quote
+
+    from refinery_watch.sources import __main__ as cli
+
+    env = {
+        "DATABASE_URL": f"{app_url}?options={quote(f'-c search_path={seeded_schema}')}",
+        "CONTACT_EMAIL": "contact@example.com",
+        "OBJECT_STORE_ENDPOINT": "https://store.example.com",
+        "OBJECT_STORE_REGION": "test-1",
+        "OBJECT_STORE_BUCKET_RAW": "rw-raw-test",
+        "OBJECT_STORE_ACCESS_KEY": "access-id",
+        "OBJECT_STORE_SECRET_KEY": "secret-value-xyz",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    def lost(conn: object, run_id: int, outcome: object) -> None:
+        raise RunNotRunning("lost")
+
+    monkeypatch.setattr(cli, "finish_run", lost)
+    t = httpx.MockTransport(lambda r: httpx.Response(404))
+    code = cli.main(
+        ["hp_news"], transport=t, resolve=lambda h: ["93.184.216.34"], store=FakeStore()
+    )
+    assert code == 1

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from refinery_watch.db.connect import Conn
 from refinery_watch.objects import RawStore
 from refinery_watch.sources.http import (
+    BudgetExceeded,
     Fetcher,
     FetchError,
     HostBlocked,
@@ -115,6 +116,7 @@ def run(
     interval_min: int,
     deadline: float,
 ) -> RunOutcome:
+    fetcher.set_deadline(deadline)
     try:
         reply = fetcher.get(feed_url, params=build_params(interval_min), accept="application/json")
         leads = parse_artlist(reply.body)
@@ -147,6 +149,9 @@ def run(
             if host not in blocked:
                 blocked.append(host)
             tally.add("blocked_host")
+            continue
+        except BudgetExceeded:
+            tally.add("budget")
             continue
         except RobotsDisallowed:
             tally.add("robots")

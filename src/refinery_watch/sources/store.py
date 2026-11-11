@@ -170,6 +170,10 @@ class SourceRow:
     robots_status: str
 
 
+class RunNotRunning(RuntimeError):  # noqa: N818
+    """finish_run found no running row, for example because a later start swept it as stale."""
+
+
 class SourceMissing(RuntimeError):  # noqa: N818
     """The source row is not in the database."""
 
@@ -249,12 +253,15 @@ def start_run(
 def finish_run(conn: Conn, run_id: int, outcome: RunOutcome) -> None:
     note = outcome.note[:NOTE_MAX_CHARS] if outcome.note else None
     conn.rollback()
-    conn.execute(
+    cursor = conn.execute(
         "UPDATE job_run SET status = %s, finished_at = clock_timestamp(), rows_in = %s,"
         " rows_out = %s, error = %s WHERE id = %s AND status = 'running'",
         (outcome.status, outcome.rows_in, outcome.rows_out, note, run_id),
     )
+    updated = cursor.rowcount
     conn.commit()
+    if updated != 1:
+        raise RunNotRunning(f"job_run {run_id} was not running, so its result was not recorded")
 
 
 @dataclass(frozen=True, slots=True)

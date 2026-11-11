@@ -1,11 +1,16 @@
 """Regression tests for defects found after the first adapters build. Offline only."""
 
+from collections.abc import Iterator
+
 import httpx
 import pytest
-from tests.sources.helpers import make_fetcher
+from tests.sources.helpers import Clock, FakeStore, Handler, make_fetcher
 
+from refinery_watch.sources import hp_rss
 from refinery_watch.sources.hp_rss import parse_feed
+from refinery_watch.sources.http import BudgetExceeded, HostBlocked
 from refinery_watch.sources.published import parse_iso8601, parse_rfc822
+from refinery_watch.sources.store import RUN_BUDGET
 from refinery_watch.sources.text import decode_html, page_text
 
 
@@ -132,3 +137,108 @@ def test_redirect_does_not_resend_params() -> None:
     assert "SECRET123" in str(net.requests[0].url)
     assert "SECRET123" not in str(net.requests[-1].url)
     assert len(net.requests) == 2
+
+
+HTML = {"content-type": "text/html"}
+ARTICLE = (
+    b"<html><body><article><p>" + b"A refinery was shut. " * 40 + b"</p></article></body></html>"
+)
+
+
+def crawl_delay(seconds: int) -> Handler:
+    return lambda r: httpx.Response(200, text=f"User-agent: *\nCrawl-delay: {seconds}\n")
+
+
+def test_crawl_delay_over_the_budget_skips_the_host() -> None:
+    fetcher, net, clock = make_fetcher(
+        lambda r: httpx.Response(200, content=b"x"), robots=crawl_delay(3600)
+    )
+    fetcher.set_deadline(clock.t + 1200)
+    for _ in range(2):
+        with pytest.raises(BudgetExceeded, match="crawl_delay_exceeds_budget"):
+            fetcher.get("https://a.example.com/x")
+    assert net.requests == []
+    assert len(net.robots_requests) == 1
+    assert clock.waits == []
+
+
+def test_crawl_delay_within_the_budget_is_kept() -> None:
+    fetcher, _, clock = make_fetcher(
+        lambda r: httpx.Response(200, content=b"x"), robots=crawl_delay(30)
+    )
+    fetcher.set_deadline(clock.t + 1200)
+    fetcher.get("https://a.example.com/x")
+    assert clock.waits == [30.0]
+
+
+def test_a_wait_past_the_deadline_is_not_made() -> None:
+    fetcher, net, clock = make_fetcher(lambda r: httpx.Response(200, content=b"x"))
+    fetcher.set_deadline(clock.t + 2)
+    with pytest.raises(BudgetExceeded):
+        fetcher.get("https://a.example.com/x")
+    assert clock.waits == []
+    assert net.requests == []
+
+
+def test_a_retry_wait_past_the_deadline_is_not_made() -> None:
+    fetcher, net, clock = make_fetcher(lambda r: httpx.Response(503))
+    fetcher.set_deadline(clock.t + 20)
+    with pytest.raises(BudgetExceeded):
+        fetcher.get("https://a.example.com/x")
+    assert 30.0 not in clock.waits
+    assert len(net.requests) == 1
+
+
+def test_retry_after_past_the_deadline_is_not_made() -> None:
+    fetcher, _, clock = make_fetcher(lambda r: httpx.Response(429, headers={"retry-after": "200"}))
+    fetcher.set_deadline(clock.t + 100)
+    with pytest.raises(BudgetExceeded):
+        fetcher.get("https://a.example.com/x")
+    assert 200.0 not in clock.waits
+
+
+def test_hp_run_stays_inside_its_budget() -> None:
+    items = b"".join(
+        f"<item><title>t{n}</title><link>https://hp.example.com/news/{n}</link></item>".encode()
+        for n in range(3)
+    )
+    feed = b"<rss><channel>" + items + b"</channel></rss>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rss":
+            return httpx.Response(200, content=feed)
+        return httpx.Response(200, content=ARTICLE, headers=HTML)
+
+    fetcher, _, clock = make_fetcher(handler, robots=crawl_delay(3600))
+    start = clock.t
+    deadline = start + RUN_BUDGET.total_seconds()
+    outcome = hp_rss.run(
+        None,  # type: ignore[arg-type]
+        fetcher,
+        FakeStore(),
+        lambda t: (),
+        "hp_news",
+        1,
+        "https://hp.example.com/rss",
+        deadline,
+    )
+    assert clock.t - start <= RUN_BUDGET.total_seconds(), clock.waits
+    assert outcome.status == "failed"
+    assert outcome.note is not None
+    assert "BudgetExceeded" in outcome.note
+
+
+def test_a_slow_dripping_body_is_cut_off() -> None:
+    clock = Clock()
+    pulled: list[int] = []
+
+    def drip() -> Iterator[bytes]:
+        for n in range(1000):
+            clock.t += 19.0
+            pulled.append(n)
+            yield b"x"
+
+    fetcher, _, _ = make_fetcher(lambda r: httpx.Response(200, content=drip()), clock=clock)
+    with pytest.raises(HostBlocked):
+        fetcher.get("https://a.example.com/x")
+    assert max(pulled) < 10

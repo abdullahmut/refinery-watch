@@ -23,6 +23,7 @@ from refinery_watch.sources import eia_wpsr, gdelt_doc, hp_rss
 from refinery_watch.sources.http import Fetcher, FetchError, Resolver, resolve_host
 from refinery_watch.sources.store import (
     RUN_BUDGET,
+    RunNotRunning,
     RunOutcome,
     SourceMissing,
     SourceNotCleared,
@@ -124,7 +125,11 @@ def main(
         outcome = _run_guarded(
             name, conn, raw_store, run_id, row, email, eia_key, transport, resolve
         )
-        finish_run(conn, run_id, outcome)
+        try:
+            finish_run(conn, run_id, outcome)
+        except RunNotRunning as exc:
+            log.error("job=%s status=failed note=%s", job, exc)
+            return 1
         _report(job, outcome)
         return 1 if outcome.status == "failed" else 0
     finally:

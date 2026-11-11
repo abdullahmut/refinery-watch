@@ -22,6 +22,7 @@ BACKOFF_S: Final = (30.0, 60.0, 120.0)
 MAX_RETRY_AFTER_S: Final = 300.0
 BLOCKING_STATUSES: Final = frozenset({401, 403, 451})
 MAX_BYTES: Final = 5_000_000
+REQUEST_TOTAL_S: Final = 60.0
 MAX_REDIRECTS: Final = 5
 ALLOWED_PORTS: Final = (80, 443)
 
@@ -65,6 +66,10 @@ class HostBlocked(FetchError):  # noqa: N818
 
 class AddressRefused(FetchError):  # noqa: N818
     """The URL is not plain http(s) on a public address."""
+
+
+class BudgetExceeded(FetchError):  # noqa: N818
+    """A wait would run past the run deadline, so the request is not made."""
 
 
 Resolver = Callable[[str], list[str]]
@@ -154,9 +159,18 @@ class Fetcher:
         self._robots: dict[str, _Robots] = {}
         self._crawl_delay: dict[str, float] = {}
         self._last_start: dict[str, float] = {}
+        self._over_budget: set[str] = set()
+        self._deadline: float | None = None
 
     def monotonic(self) -> float:
         return self._monotonic()
+
+    def set_deadline(self, deadline: float | None) -> None:
+        """Sets the run deadline on this fetcher's clock. No wait may end after it."""
+        self._deadline = deadline
+
+    def _would_pass_deadline(self, wait: float) -> bool:
+        return self._deadline is not None and self._monotonic() + wait > self._deadline
 
     def blocked_hosts(self) -> frozenset[str]:
         return frozenset(self._blocked)
@@ -214,6 +228,8 @@ class Fetcher:
             raise AddressRefused("bad_port", url)
         if host in self._blocked:
             raise HostBlocked("host_blocked", url)
+        if host in self._over_budget:
+            raise BudgetExceeded("crawl_delay_exceeds_budget", url)
         try:
             addresses = self._resolve(host)
         except OSError:
@@ -234,6 +250,8 @@ class Fetcher:
 
     def _fetch_robots(self, origin: str) -> _Robots:
         outcome = self._attempts(f"{origin}/robots.txt", (), "text/plain")
+        if isinstance(outcome, _Stop) and outcome.reason == "budget":
+            raise BudgetExceeded("budget", origin)
         if isinstance(outcome, _Reply) and outcome.status in (200, 404, 410):
             if outcome.status == 200:
                 text = outcome.body.decode("utf-8", errors="replace")
@@ -241,13 +259,19 @@ class Fetcher:
             else:
                 rules = ALLOW_ALL
             if rules.crawl_delay is not None:
-                self._crawl_delay[(urlsplit(origin).hostname or "").lower()] = rules.crawl_delay
+                host = (urlsplit(origin).hostname or "").lower()
+                if self._would_pass_deadline(rules.crawl_delay):
+                    self._over_budget.add(host)
+                    raise BudgetExceeded("crawl_delay_exceeds_budget", origin)
+                self._crawl_delay[host] = rules.crawl_delay
             return _Robots(rules)
         return _Robots(None)
 
     def _send(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply:
         outcome = self._attempts(url, params, accept)
         if isinstance(outcome, _Stop):
+            if outcome.reason == "budget":
+                raise BudgetExceeded("budget", url)
             if outcome.block:
                 self._blocked.add((urlsplit(url).hostname or "").lower())
                 raise HostBlocked(outcome.reason, url, outcome.status)
@@ -273,7 +297,10 @@ class Fetcher:
                 return _Stop("retry_after_too_long", status, True)
             if attempt == MAX_RETRIES:
                 return _Stop("retries_exhausted", status, True)
-            self._sleep(retry_after if retry_after is not None else BACKOFF_S[attempt])
+            wait = retry_after if retry_after is not None else BACKOFF_S[attempt]
+            if self._would_pass_deadline(wait):
+                return _Stop("budget", status, False)
+            self._sleep(wait)
         raise AssertionError("unreachable")
 
     def _space(self, url: str) -> None:
@@ -283,6 +310,8 @@ class Fetcher:
         if last is not None:
             wait = gap - (self._monotonic() - last)
             if wait > 0:
+                if self._would_pass_deadline(wait):
+                    raise BudgetExceeded("budget", url)
                 self._sleep(wait)
         self._last_start[host] = self._monotonic()
 
@@ -310,6 +339,7 @@ class Fetcher:
             request = self._client.build_request(
                 "GET", url, params=list(params) or None, headers={"Accept": accept}
             )
+            started = self._monotonic()
             response = self._client.send(request, stream=True)
             try:
                 chunks: list[bytes] = []
@@ -318,6 +348,9 @@ class Fetcher:
                     size += len(chunk)
                     if size > MAX_BYTES:
                         failure = "too_large"
+                        break
+                    if self._monotonic() - started > REQUEST_TOTAL_S:
+                        failure = "timeout"
                         break
                     chunks.append(chunk)
                 if failure is None:

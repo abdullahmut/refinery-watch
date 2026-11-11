@@ -11,6 +11,7 @@ from defusedxml.common import DefusedXmlException
 from refinery_watch.db.connect import Conn
 from refinery_watch.objects import RawStore
 from refinery_watch.sources.http import (
+    BudgetExceeded,
     Fetcher,
     FetchError,
     HostBlocked,
@@ -95,6 +96,7 @@ def run(
     feed_url: str,
     deadline: float,
 ) -> RunOutcome:
+    fetcher.set_deadline(deadline)
     try:
         feed = fetcher.get(feed_url, accept=FEED_ACCEPT)
         items, reasons = parse_feed(feed.body)
@@ -121,6 +123,10 @@ def run(
             fetched = fetch_page(fetcher, link)
         except HostBlocked as exc:
             return RunOutcome("failed", len(items), stored, f"HostBlocked: {exc}")
+        except BudgetExceeded:
+            # Every item is on the feed host, so no later item can be fetched either.
+            tally.add("budget")
+            break
         except RobotsDisallowed:
             tally.add("robots")
             continue

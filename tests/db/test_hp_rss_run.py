@@ -4,6 +4,7 @@ import httpx
 import pytest
 from tests.db.helpers import open_in_schema
 from tests.sources.helpers import (
+    Clock,
     FakeStore,
     Handler,
     html_response,
@@ -234,11 +235,30 @@ def test_implausible_feed_date_falls_back_to_the_page_date(app: Conn) -> None:
 def test_deadline_stops_fetching_and_says_so(app: Conn) -> None:
     feed = rss("https://hp.example.com/news/a", "https://hp.example.com/news/b")
     pages = {"/news/a": html_response("article_handmade.html")}
-    fetcher, net, clock = make_fetcher(site(feed, pages))
-    outcome = go(app, fetcher, FakeStore(), deadline=clock.t)
+    inner = site(feed, pages)
+    holder: list[Clock] = []
+
+    def slow_feed(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rss":
+            holder[0].t += 50.0
+        return inner(request)
+
+    fetcher, net, clock = make_fetcher(slow_feed)
+    holder.append(clock)
+    outcome = go(app, fetcher, FakeStore(), deadline=clock.t + 40.0)
     assert outcome.status == "ok"
     assert outcome.rows_out == 0
     assert outcome.note == "deadline after 0 documents"
+    assert [r.url.path for r in net.requests] == ["/rss"]
+
+
+def test_a_wait_that_would_pass_the_deadline_ends_the_loop(app: Conn) -> None:
+    feed = rss("https://hp.example.com/news/a", "https://hp.example.com/news/b")
+    pages = {"/news/a": html_response("article_handmade.html")}
+    fetcher, net, clock = make_fetcher(site(feed, pages))
+    outcome = go(app, fetcher, FakeStore(), deadline=clock.t + 6.0)
+    assert outcome.status == "ok"
+    assert outcome.note == "budget=1"
     assert [r.url.path for r in net.requests] == ["/rss"]
 
 

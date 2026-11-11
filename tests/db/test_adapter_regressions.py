@@ -214,3 +214,12 @@ def test_cli_exits_1_when_the_run_row_was_lost(
         ["hp_news"], transport=t, resolve=lambda h: ["93.184.216.34"], store=FakeStore()
     )
     assert code == 1
+
+
+def test_finish_run_note_has_no_control_characters(app: Conn) -> None:
+    run_id = start_run(app, "fetch_hp_news", 1)
+    assert run_id is not None
+    finish_run(app, run_id, RunOutcome("failed", 0, 0, "first\nsecond\x1b[0m\r\nthird"))
+    row = app.execute("SELECT error FROM job_run WHERE id = %s", (run_id,)).fetchone()
+    assert row is not None
+    assert row["error"] == "first second [0m third"

@@ -20,6 +20,7 @@ from refinery_watch.extract.prefilter import build_term_matcher
 from refinery_watch.extract.reference import load_refineries
 from refinery_watch.objects import ObjectStoreError, RawStore, S3RawStore
 from refinery_watch.sources import eia_wpsr, gdelt_doc, hp_rss
+from refinery_watch.sources.clean import clean_text
 from refinery_watch.sources.http import Fetcher, FetchError, Resolver, resolve_host
 from refinery_watch.sources.store import (
     RUN_BUDGET,
@@ -58,7 +59,7 @@ def _report(job: str, outcome: RunOutcome) -> None:
         outcome.status,
         outcome.rows_in,
         outcome.rows_out,
-        outcome.note or "-",
+        clean_text(outcome.note) if outcome.note else "-",
     )
 
 
@@ -115,7 +116,7 @@ def main(
         try:
             row = source_row(conn, name)
         except (SourceMissing, SourceNotCleared) as exc:
-            log.error("job=%s status=failed note=%s", job, exc)
+            log.error("job=%s status=failed note=%s", job, clean_text(str(exc)))
             return 1
         run_id = start_run(conn, job, row.fetch_interval_min)
         if run_id is None:
@@ -128,7 +129,7 @@ def main(
         try:
             finish_run(conn, run_id, outcome)
         except RunNotRunning as exc:
-            log.error("job=%s status=failed note=%s", job, exc)
+            log.error("job=%s status=failed note=%s", job, clean_text(str(exc)))
             return 1
         _report(job, outcome)
         return 1 if outcome.status == "failed" else 0

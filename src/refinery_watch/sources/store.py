@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.objects import RawStore
+from refinery_watch.sources.clean import clean_text
 from refinery_watch.sources.published import Published
 
 TermMatcher = Callable[[str], Sequence[str]]
@@ -251,7 +252,7 @@ def start_run(
 
 
 def finish_run(conn: Conn, run_id: int, outcome: RunOutcome) -> None:
-    note = outcome.note[:NOTE_MAX_CHARS] if outcome.note else None
+    note = clean_text(outcome.note)[:NOTE_MAX_CHARS] if outcome.note else None
     conn.rollback()
     cursor = conn.execute(
         "UPDATE job_run SET status = %s, finished_at = clock_timestamp(), rows_in = %s,"

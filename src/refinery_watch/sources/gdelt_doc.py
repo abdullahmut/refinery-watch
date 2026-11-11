@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.objects import RawStore
+from refinery_watch.sources.clean import clean_text
 from refinery_watch.sources.http import (
     BudgetExceeded,
     Fetcher,
@@ -91,14 +92,14 @@ def parse_artlist(body: bytes) -> list[Lead]:
     try:
         data = json.loads(text, strict=False)
     except ValueError:
-        raise GdeltResponseError(text[:ERROR_TEXT_CHARS]) from None
+        raise GdeltResponseError(clean_text(text)[:ERROR_TEXT_CHARS]) from None
     if not isinstance(data, dict):
-        raise GdeltResponseError(text[:ERROR_TEXT_CHARS])
+        raise GdeltResponseError(clean_text(text)[:ERROR_TEXT_CHARS])
     if not data:
         return []
     articles = data.get("articles")
     if not isinstance(articles, list):
-        raise GdeltResponseError(text[:ERROR_TEXT_CHARS])
+        raise GdeltResponseError(clean_text(text)[:ERROR_TEXT_CHARS])
     return [lead for lead in map(_lead, articles) if lead is not None]
 
 

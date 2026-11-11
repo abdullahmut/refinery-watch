@@ -33,13 +33,21 @@ class Clock:
 
 
 class Net:
-    """Records requests and answers them from a handler."""
+    """Records requests and answers them from a handler.
 
-    def __init__(self, handler: Handler) -> None:
+    Requests for /robots.txt go to `robots` and are listed apart from `requests`.
+    """
+
+    def __init__(self, handler: Handler, robots: Handler) -> None:
         self.handler = handler
+        self.robots = robots
         self.requests: list[httpx.Request] = []
+        self.robots_requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            self.robots_requests.append(request)
+            return self.robots(request)
         self.requests.append(request)
         return self.handler(request)
 
@@ -52,8 +60,9 @@ def make_fetcher(
     *,
     addresses: dict[str, list[str]] | None = None,
     clock: Clock | None = None,
+    robots: Handler = lambda request: httpx.Response(404),
 ) -> tuple[Fetcher, Net, Clock]:
-    net = Net(handler)
+    net = Net(handler, robots)
     clk = clock or Clock()
     table = addresses or {}
 

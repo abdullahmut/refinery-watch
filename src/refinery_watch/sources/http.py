@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Final, Self
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.robotparser import RobotFileParser
 
 import httpx
 
@@ -111,6 +112,13 @@ class _Reply:
 
 
 @dataclass(frozen=True, slots=True)
+class _Robots:
+    """Parsed rules for one origin. A parser of None means every path is disallowed."""
+
+    parser: RobotFileParser | None
+
+
+@dataclass(frozen=True, slots=True)
 class _Stop:
     """A request that ended without a usable reply."""
 
@@ -141,6 +149,7 @@ class Fetcher:
         self._sleep = sleep
         self._now = now
         self._blocked: set[str] = set()
+        self._robots: dict[str, _Robots] = {}
 
     def blocked_hosts(self) -> frozenset[str]:
         return frozenset(self._blocked)
@@ -165,6 +174,7 @@ class Fetcher:
         send_params = params
         for _hop in range(MAX_REDIRECTS + 1):
             self._check_target(current)
+            self._check_robots(current)
             reply = self._send(current, send_params, accept)
             location = reply.headers.get("location")
             if 300 <= reply.status < 400 and location:
@@ -203,6 +213,26 @@ class Fetcher:
             addresses = []
         if not addresses or not all(_public(a) for a in addresses):
             raise AddressRefused("non_public_address", url)
+
+    def _check_robots(self, url: str) -> None:
+        parts = urlsplit(url)
+        origin = f"{parts.scheme}://{parts.netloc.lower()}"
+        rules = self._robots.get(origin)
+        if rules is None:
+            rules = self._robots[origin] = self._fetch_robots(origin)
+        if rules.parser is None or not rules.parser.can_fetch(UA_TOKEN, url):
+            raise RobotsDisallowed("robots_disallowed", url)
+
+    def _fetch_robots(self, origin: str) -> _Robots:
+        outcome = self._attempts(f"{origin}/robots.txt", (), "text/plain")
+        if isinstance(outcome, _Reply) and outcome.status in (200, 404, 410):
+            parser = RobotFileParser()
+            if outcome.status == 200:
+                parser.parse(outcome.body.decode("utf-8", errors="replace").splitlines())
+            else:
+                parser.parse([])
+            return _Robots(parser)
+        return _Robots(None)
 
     def _send(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply:
         outcome = self._attempts(url, params, accept)

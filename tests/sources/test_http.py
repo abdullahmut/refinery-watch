@@ -9,6 +9,7 @@ from refinery_watch.sources.http import (
     Fetcher,
     FetchError,
     HostBlocked,
+    RobotsDisallowed,
     strip_tracking,
     user_agent,
 )
@@ -300,3 +301,101 @@ def test_other_4xx_are_not_retried(status: int) -> None:
     assert len(net.requests) == 1
     assert clock.waits == []
     assert fetcher.blocked_hosts() == frozenset()
+
+
+def robots_text(text: str) -> Handler:
+    return lambda request: httpx.Response(200, text=text)
+
+
+def test_robots_disallow_blocks_path_without_a_request() -> None:
+    fetcher, net, _ = make_fetcher(
+        lambda r: OK, robots=robots_text("User-agent: *\nDisallow: /news/")
+    )
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/news/x")
+    assert net.requests == []
+    assert fetcher.get("https://a.example.com/other").status == 200
+
+
+def test_robots_group_for_our_token_wins() -> None:
+    text = "User-agent: refinery-watch\nDisallow: /\n\nUser-agent: *\nAllow: /"
+    fetcher, net, _ = make_fetcher(lambda r: OK, robots=robots_text(text))
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/x")
+    assert net.requests == []
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_robots_404_and_410_allow_all(status: int) -> None:
+    fetcher, _, _ = make_fetcher(lambda r: OK, robots=lambda r: httpx.Response(status))
+    assert fetcher.get("https://a.example.com/anything").status == 200
+
+
+def test_empty_robots_allows_all() -> None:
+    fetcher, _, _ = make_fetcher(lambda r: OK, robots=robots_text(""))
+    assert fetcher.get("https://a.example.com/anything").status == 200
+
+
+@pytest.mark.parametrize("status", [500, 503, 401, 403, 302])
+def test_robots_failure_disallows_everything_for_the_run(status: int) -> None:
+    fetcher, net, _ = make_fetcher(lambda r: OK, robots=lambda r: httpx.Response(status))
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/x")
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/y")
+    assert net.requests == []
+    assert fetcher.blocked_hosts() == frozenset()
+
+
+def test_robots_connect_error_disallows_everything() -> None:
+    def robots(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("c")
+
+    fetcher, net, _ = make_fetcher(lambda r: OK, robots=robots)
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/x")
+    assert net.requests == []
+
+
+def test_robots_fetched_once_per_host() -> None:
+    fetcher, net, _ = make_fetcher(lambda r: OK)
+    fetcher.get("https://a.example.com/x")
+    fetcher.get("https://a.example.com/y")
+    fetcher.get("https://b.example.com/y")
+    assert [r.url.host for r in net.robots_requests] == ["a.example.com", "b.example.com"]
+
+
+def test_robots_request_is_not_redirected_and_uses_our_agent() -> None:
+    fetcher, net, _ = make_fetcher(
+        lambda r: OK, robots=lambda r: httpx.Response(301, headers={"location": "/elsewhere"})
+    )
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/x")
+    assert len(net.robots_requests) == 1
+    assert "refinery-watch/0.1" in net.robots_requests[0].headers["user-agent"]
+
+
+def test_redirect_hop_is_checked_against_its_own_robots() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a.example.com":
+            return httpx.Response(302, headers={"location": "https://b.example.org/private"})
+        return OK
+
+    def robots(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "b.example.org":
+            return httpx.Response(200, text="User-agent: *\nDisallow: /private")
+        return httpx.Response(404)
+
+    fetcher, net, _ = make_fetcher(handler, robots=robots)
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/x")
+    assert [r.url.host for r in net.requests] == ["a.example.com"]
+
+
+def test_robots_applies_to_query_paths() -> None:
+    fetcher, net, _ = make_fetcher(
+        lambda r: OK, robots=robots_text("User-agent: *\nDisallow: /rss")
+    )
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://a.example.com/rss?feed=news")
+    assert net.requests == []

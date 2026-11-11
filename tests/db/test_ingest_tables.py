@@ -12,10 +12,10 @@ pytestmark = pytest.mark.integration
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 GRANTS = {
-    "job_run": {"SELECT", "INSERT", "UPDATE"},
+    "job_run": {"SELECT", "INSERT"},
     "raw_document": {"SELECT", "INSERT"},
     "extraction": {"SELECT", "INSERT"},
-    "review_item": {"SELECT", "INSERT", "UPDATE"},
+    "review_item": {"SELECT", "INSERT"},
 }
 
 

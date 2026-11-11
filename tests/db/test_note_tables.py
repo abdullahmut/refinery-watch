@@ -12,7 +12,7 @@ from refinery_watch.db.connect import Conn
 pytestmark = pytest.mark.integration
 
 GRANTS = {
-    "note": {"SELECT", "INSERT", "UPDATE"},
+    "note": {"SELECT", "INSERT"},
     "price": {"SELECT", "INSERT"},
     "tceq_event": {"SELECT", "INSERT"},
     "llm_spend": {"SELECT"},

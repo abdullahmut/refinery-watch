@@ -2,7 +2,7 @@
 
 from alembic import op
 
-from refinery_watch.db.migrations.params import grant
+from refinery_watch.db.migrations.params import grant, grant_update_columns
 
 revision = "0002"
 down_revision = "0001"
@@ -102,7 +102,9 @@ def upgrade() -> None:
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES} FROM PUBLIC")
     op.execute(grant("SELECT, INSERT", "raw_document, extraction"))
-    op.execute(grant("SELECT, INSERT, UPDATE", "job_run, review_item"))
+    op.execute(grant("SELECT, INSERT", "job_run, review_item"))
+    op.execute(grant_update_columns("job_run", "finished_at, status, rows_in, rows_out, error"))
+    op.execute(grant_update_columns("review_item", "resolved_at, resolution, outage_event_id"))
 
 
 def downgrade() -> None:

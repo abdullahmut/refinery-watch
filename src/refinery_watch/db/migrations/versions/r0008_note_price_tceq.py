@@ -2,7 +2,7 @@
 
 from alembic import op
 
-from refinery_watch.db.migrations.params import grant, pin_search_path
+from refinery_watch.db.migrations.params import grant, grant_update_columns, pin_search_path
 
 revision = "0008"
 down_revision = "0007"
@@ -109,7 +109,8 @@ def upgrade() -> None:
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES}, llm_spend FROM PUBLIC")
     op.execute("REVOKE EXECUTE ON FUNCTION llm_spend_usd(timestamptz, timestamptz) FROM PUBLIC")
-    op.execute(grant("SELECT, INSERT, UPDATE", "note"))
+    op.execute(grant("SELECT, INSERT", "note"))
+    op.execute(grant_update_columns("note", "status, sent_at, provider_message_id"))
     op.execute(grant("SELECT, INSERT", "price, tceq_event"))
     op.execute(grant("SELECT", "llm_spend"))
     op.execute(grant("EXECUTE", "FUNCTION llm_spend_usd(timestamptz, timestamptz)"))

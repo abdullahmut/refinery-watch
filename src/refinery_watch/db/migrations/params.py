@@ -30,6 +30,10 @@ def grant(privileges: str, objects: str) -> str:
     return f'GRANT {privileges} ON {objects} TO "{app_role()}"'
 
 
+def grant_update_columns(table: str, columns: str) -> str:
+    return f'GRANT UPDATE ({columns}) ON {table} TO "{app_role()}"'
+
+
 def revoke(privileges: str, objects: str) -> str:
     return f'REVOKE {privileges} ON {objects} FROM "{app_role()}"'
 

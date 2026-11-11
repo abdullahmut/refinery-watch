@@ -43,25 +43,89 @@ a 200 kb/d CDU is 80 kb/d affected.
 
 ## Dates
 
+- The publication date is the calendar date in the source's own timezone, where the source
+  states one. Otherwise it is the UTC date. Every relative date below, and the 90-day check,
+  resolves against it. Stored timestamps stay UTC. A Singapore article published at 07:00 SGT on
+  Friday 13 Nov has publication date 13 Nov, although it is 23:00 UTC on 12 Nov.
 - `start_date`: the date the state changed, not the date it was reported. If only "last week"
   is given, use the Monday of that week and set `confidence` to at most `medium`.
 - `expected_restart_date`: as stated, or null. "Several weeks" is null, not a guess.
-- Weekday names resolve against the publication date: "Tuesday" in an article published on a
-  Thursday is the Tuesday two days before. "Next Tuesday" is the one after. "Mid-October" is the
-  15th; "early" and "late" are null.
-- A restart that is announced ("plans to restart on Wednesday") is not a `restart` row. It updates
-  `expected_restart_date` on the open event. The `restart` row is written only when a source says
-  the unit is back.
+- Weekday names resolve against the publication date. The tense of the sentence sets the
+  direction.
+  - Past or present tense ("shut on Tuesday", "has been offline since Tuesday") resolves to the
+    most recent such day on or before the publication date. "Tuesday" in an article published on
+    a Thursday is the Tuesday two days before.
+  - Future tense ("plans to", "will", "expected to") resolves to the next such day on or after
+    the publication date. "Plans to restart on Wednesday" in an article published on a Thursday
+    is the Wednesday six days after.
+  - In both cases, a weekday that names the publication day resolves to the publication date
+    itself.
+  - "Next Tuesday" is the first Tuesday after the publication date, never the publication date
+    itself. "Last Tuesday" is the most recent Tuesday before the publication date, never the
+    publication date itself.
+  - If the tense is unclear, the row goes to review.
+- "Mid-October" is the 15th; "early" and "late" are null.
+- A restart that is announced ("plans to restart on Wednesday") is not a `restart` row. It is a
+  revision: a new row that supersedes the open event and carries the new
+  `expected_restart_date`. The `restart` row is written only when a source says the unit is back.
 - Dates must fall within 90 days either side of the publication date. Outside that, the row goes
   to review.
-- A `restart` event closes the matching open event by setting `valid_to` on the new row's
-  predecessor. Matching is by refinery and unit, with the most recent open event winning.
+
+## Restarts
+
+These rules are provisional. They are settled in the `outage_event` schema spec, where they are
+tested against a seeded database.
+
+A `restart` row is a new row. It never writes to the event it ends. On a `restart` row,
+`start_date` is the date the unit came back. If that date is not known, the restart goes to
+review. The row carries `ends_event`, a new column: the id of the event row it ends.
+`ends_event` is set once, when the restart row is written, and is null on `unplanned` and
+`planned` rows.
+
+To set `ends_event`, look only at rows current at the restart's `known_at`. Of those, take the
+`unplanned` and `planned` rows that:
+
+- are for the same refinery and unit. A null unit equals a null unit, so a whole-plant restart
+  matches a whole-plant outage. A null unit never equals a named unit (see open decision 5);
+- are open at that time;
+- have a `start_date` on or before the restart's own `start_date`.
+
+The one with the latest `start_date` wins. A tie goes to the later `known_at`, then to the lower
+id. If no row qualifies, the restart is not written to `outage_event`. It goes to review.
+
+Matching happens once, at write time. It never runs again at query time, so a later event cannot
+take an earlier restart. A restart reported late still ends the event it follows, not one that
+started after the unit came back. This assumes two outages on one unit may both be open; open
+decision 6 may change the outcome.
+
+An event is closed as of T if a `restart` row current as of T has `ends_event` pointing at the
+event's row or at any row in its `supersedes` chain. Otherwise it is open. A revision written after
+the restart is in the same chain, so the event stays closed.
+
+Example: a CDU goes down on 1 Nov (E1). A restart is known on 5 Nov (X1), with `ends_event` set to
+E1. The CDU goes down again on 20 Nov (E2). As of 21 Nov, E1 is closed and E2 is open. If instead
+X1 were first reported on 25 Nov with the unit back on 10 Nov, it would still end E1, because E2
+started after 10 Nov. That case assumes E1 and E2 are both open from 20 to 25 Nov. Under open
+decision 6 they may not be, and X1 may go to review instead.
 
 ## Revisions
 
-A later source that changes any of unit, capacity, start or expected restart for an existing open
-event produces a new row that supersedes the old one. Nothing is overwritten. The old row keeps
-its `known_at`. The note shows "revised: restart 20 Nov, was 12 Nov".
+A later source that changes any of unit, capacity, start or expected restart for an existing
+event, open or closed, produces a new row with `supersedes` set to the row it replaces. The old
+row is untouched. It keeps its `known_at`, and no column on it is set or changed. Current rows are
+those no later row supersedes. An as-of query at T sees only rows known by T, so it shows the old
+row until the revision was known. The note shows "revised: restart 20 Nov, was 12 Nov".
+
+- A revision of a closed event, for example a capacity figure published after the restart, is in
+  the same chain as the row the restart points at. The event stays closed.
+- A revision of a `restart` row copies `ends_event` from the row it supersedes. It never matches
+  again. A revision that changes the refinery or unit of a restart, or moves its date before the
+  `start_date` of the event it ends, goes to review.
+- A new row may supersede only a row that is current when the new row is written. A second row
+  that supersedes the same row goes to review. Each chain is then a single line with at most one
+  current row at any T. This keeps the as-of rule as written: one event never shows two current
+  rows, and its capacity is never counted twice. The database holds this with a unique
+  constraint on `supersedes` (decision record 005).
 
 ## Confidence
 
@@ -79,9 +143,21 @@ as capacity offline, until a news or company source confirms a throughput effect
 
 ## Dedupe
 
-Two extractions are the same event when the refinery matches, the unit matches (or one is null),
-and start dates are within 3 days. The row with the higher confidence is kept; the others are
-linked as corroboration. Corroboration count is what lifts `medium` to `high`.
+These rules are provisional. They are settled in the `outage_event` schema spec, where they are
+tested against a seeded database.
+
+Two extractions are the same event when they are in the same family, the refinery matches, the
+unit matches (or one is null), and start dates are within 3 days. There are two families:
+outages (`unplanned` and `planned`) and restarts (`restart`). A shutdown and its own restart are
+never one event. One outage that one source calls planned and another calls unplanned is one
+event, so its capacity is counted once. The row with the higher confidence is kept, with its event
+type; the others are linked as corroboration. Corroboration count is what lifts `medium` to
+`high`.
+
+Not settled: whether dedupe runs on extractions before they reach `outage_event`, or on rows
+already in it. If it runs after, "kept" and "linked" cannot mean changing or removing a row,
+because rows in `outage_event` are never updated or deleted. This needs a decision record before
+dedupe is coded.
 
 ## Regions
 
@@ -91,15 +167,33 @@ Do not add regions without a decision record.
 
 ## Open decisions
 
-Found while labelling the first golden set. Each needs a decision record before the rule is coded.
+Decisions 1 to 4 were found while labelling the first golden set; decisions 5 to 7 came from
+review of the restart and dedupe rules. Each needs a decision record before the rule is coded.
 
 1. **Old starts mentioned in passing.** The 90-day window rejects a March outage described in a
    July article. Options: keep strict and lose it; allow with `confidence = low` and a flag; widen
-   to 180 days. Leaning: allow with `low`, because the row is still true and the PM would rather
+   to 180 days. Leaning: allow with `low`, because the row is still true and a desk would rather
    see it flagged than not at all.
 2. **Null start date.** "Remains shut, restart undecided" with no start. Options: reject; accept
-   with `valid_from` = publication date and a `start_unknown` flag. Leaning: accept, flagged.
+   with `start_date` set to the publication date and a `start_unknown` flag. Leaning: accept,
+   flagged. `known_at` is not affected either way. The record must also say whether a placeholder
+   `start_date` takes part in the 3-day dedupe window and in restart matching.
 3. **Reactivation of a closed plant.** A mothballed CDU returning is a `refinery.status` change,
    not a `restart`, by the rule above. Confirm this is what the note should show (as a reference
    change line, not in capacity returning).
 4. **Partial sub-unit restarts with no figure.** Default: no row. Confirm.
+5. **Whole-plant restart with unit outages open.** "The refinery is back online" while named units
+   at that refinery are open. `ends_event` holds one id, so as written the restart matches only an
+   open whole-plant outage, and goes to review if there is none. The same applies in reverse: a
+   unit restart never ends a whole-plant outage. Options: keep this; write one `restart` row per
+   open unit; let a whole-plant restart close every open event at that refinery, which needs a
+   different column than a single `ends_event`.
+6. **Two open outages on one unit.** A new outage on a unit that already has an open outage leaves
+   both open. The unit counts offline twice, and the first outage may never close. Intended rule:
+   a unit has at most one open outage at a time. A new shutdown on a unit with an open outage
+   either supersedes it or goes to review, never both open. The schema enforces this with a
+   constraint, not only in code.
+7. **Dedupe across a restart.** The 3-day window ignores a restart in between. Restarts of two
+   different outages merge, and a re-trip after a restart merges back into the first outage.
+   Intended rule: dedupe never merges two rows with a restart between them, and restarts dedupe
+   only by the event they end.

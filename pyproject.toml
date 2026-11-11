@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "refinery-watch"
+version = "0.1.0"
+description = "Refinery outage tracker."
+requires-python = ">=3.12,<3.13"
+dependencies = []
+classifiers = ["Private :: Do Not Upload"]
+
+[tool.uv]
+required-version = ">=0.13.7"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/refinery_watch"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.4",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source_pkgs = ["refinery_watch"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "DTZ", "S", "T20", "ERA", "FIX", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+mypy_path = "src,."
+explicit_package_bases = true

@@ -71,15 +71,13 @@ def parse_feed(xml: bytes) -> tuple[list[FeedItem], list[str]]:
         if title is None or link is None:
             reasons.append(f"item {n}: missing {'title' if title is None else 'link'}")
             continue
-        raw_date = _text(item, "pubDate")
-        items.append(
-            FeedItem(
-                title=title,
-                link=link,
-                guid=_text(item, "guid"),
-                published=parse_rfc822(raw_date) if raw_date else None,
-            )
-        )
+        try:
+            raw_date = _text(item, "pubDate")
+            published = parse_rfc822(raw_date) if raw_date else None
+        except (ValueError, OverflowError):
+            reasons.append(f"item {n}: bad date")
+            continue
+        items.append(FeedItem(title, link, _text(item, "guid"), published))
     return items, reasons
 
 
@@ -128,6 +126,10 @@ def run(
             continue
         except FetchError:
             tally.add("fetch_error")
+            continue
+        except Exception:
+            # One page that breaks the parser must not end the run.
+            tally.add("parse_error")
             continue
         if fetched is None:
             tally.add("not_html")

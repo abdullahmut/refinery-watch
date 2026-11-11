@@ -32,6 +32,12 @@ DATE_META_NAMES: Final = frozenset(
     {"pubdate", "publishdate", "date", "dc.date", "parsely-pub-date", "sailthru.date"}
 )
 META_SNIFF_BYTES: Final = 2048
+JSON_LD_MAX_CHARS: Final = 100_000
+JSON_LD_MAX_DEPTH: Final = 8
+ALLOWED_CODECS: Final = frozenset(
+    codecs.lookup(name).name
+    for name in ("utf-8", "iso-8859-1", "windows-1252", "utf-16", "shift_jis", "gb18030", "euc-kr")
+)
 _META_CHARSET = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([A-Za-z0-9_.:-]+)""", re.I)
 _SPACE = re.compile(r"\s+")
 
@@ -61,10 +67,12 @@ def is_thin(page: PageText) -> bool:
 
 
 def _codec(name: str) -> str | None:
+    """The codec name when it is on the allow-list. Other codecs are not text."""
     try:
-        return codecs.lookup(name).name
-    except LookupError:
+        found = codecs.lookup(name).name
+    except (LookupError, ValueError):
         return None
+    return found if found in ALLOWED_CODECS else None
 
 
 def decode_html(body: bytes, charset: str | None) -> str:
@@ -77,7 +85,10 @@ def decode_html(body: bytes, charset: str | None) -> str:
     for name in candidates:
         codec = _codec(name)
         if codec is not None:
-            return body.decode(codec, errors="replace")
+            try:
+                return body.decode(codec, errors="replace")
+            except UnicodeError:
+                continue
     return body.decode("utf-8", errors="replace")
 
 
@@ -88,16 +99,18 @@ class _Bucket:
     time_attr: list[str] = field(default_factory=list)
 
 
-def _ld_dates(node: object) -> list[str]:
+def _ld_dates(node: object, depth: int = 0) -> list[str]:
     out: list[str] = []
+    if depth > JSON_LD_MAX_DEPTH:
+        return out
     if isinstance(node, list):
         for item in node:
-            out.extend(_ld_dates(item))
+            out.extend(_ld_dates(item, depth + 1))
     elif isinstance(node, dict):
         value = node.get("datePublished")
         if isinstance(value, str):
             out.append(value)
-        out.extend(_ld_dates(node.get("@graph")))
+        out.extend(_ld_dates(node.get("@graph"), depth + 1))
     return out
 
 
@@ -116,6 +129,7 @@ class _Extractor(HTMLParser):
         self.buffer: list[str] = []
         self.in_ld = False
         self.ld_buffer: list[str] = []
+        self.ld_chars = 0
         self.in_title = False
         self.title_parts: list[str] = []
         self.og_title: str | None = None
@@ -153,6 +167,7 @@ class _Extractor(HTMLParser):
         if tag == "script" and "ld+json" in a.get("type", "").lower():
             self.in_ld = True
             self.ld_buffer = []
+            self.ld_chars = 0
             return
         if tag in SKIP_TAGS:
             self.skip.append(tag)
@@ -185,9 +200,11 @@ class _Extractor(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "script" and self.in_ld:
             self.in_ld = False
+            if self.ld_chars > JSON_LD_MAX_CHARS:
+                return
             try:
                 data = json.loads("".join(self.ld_buffer), strict=False)
-            except ValueError:
+            except (ValueError, RecursionError):
                 return
             self.ld_published.extend(_ld_dates(data))
             return
@@ -210,7 +227,9 @@ class _Extractor(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self.in_ld:
-            self.ld_buffer.append(data)
+            self.ld_chars += len(data)
+            if self.ld_chars <= JSON_LD_MAX_CHARS:
+                self.ld_buffer.append(data)
         elif self.skip:
             return
         elif self.in_title:

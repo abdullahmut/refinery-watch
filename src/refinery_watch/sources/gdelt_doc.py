@@ -154,6 +154,10 @@ def run(
         except FetchError:
             tally.add("fetch_error")
             continue
+        except Exception:
+            # One page that breaks the parser must not end the run.
+            tally.add("parse_error")
+            continue
         if fetched is None:
             tally.add("not_html")
             continue

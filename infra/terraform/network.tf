@@ -6,7 +6,7 @@ locals {
 }
 
 resource "digitalocean_vpc" "main" {
-  name     = "${local.name_prefix}-lon1"
+  name     = "${local.name_prefix}-${local.region}"
   region   = local.region
   ip_range = var.vpc_ip_range
 }

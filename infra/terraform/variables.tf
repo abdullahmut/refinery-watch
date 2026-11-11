@@ -3,8 +3,8 @@ variable "ssh_public_key" {
   description = "Public key for the deploy user. One line, no quotes."
 
   validation {
-    condition     = can(regex("^(ssh-ed25519|ssh-rsa) [A-Za-z0-9+/]+=*( [A-Za-z0-9@._-]+)?$", var.ssh_public_key))
-    error_message = "ssh_public_key must be a single ssh-ed25519 or ssh-rsa line."
+    condition     = can(regex("^(ssh-ed25519|ssh-rsa|sk-ssh-ed25519@openssh[.]com) [A-Za-z0-9+/]+=*( [A-Za-z0-9@._-]+)?$", var.ssh_public_key))
+    error_message = "ssh_public_key must be a single ssh-ed25519, sk-ssh-ed25519@openssh.com or ssh-rsa line."
   }
 }
 
@@ -29,29 +29,49 @@ variable "ssh_source_addresses" {
   description = "CIDR ranges allowed to reach sshd."
 
   validation {
-    condition     = length(var.ssh_source_addresses) > 0 && alltrue([for a in var.ssh_source_addresses : can(cidrhost(a, 0))])
-    error_message = "ssh_source_addresses needs at least one entry and each must be a CIDR."
+    condition = (
+      length(var.ssh_source_addresses) > 0 &&
+      alltrue([for a in var.ssh_source_addresses : try(cidrhost(a, 0) == split("/", a)[0], false)])
+    )
+    error_message = "ssh_source_addresses needs at least one entry. Each must be a CIDR with no host bits set."
   }
+
+  validation {
+    condition     = var.allow_ssh_from_anywhere || !anytrue([for a in var.ssh_source_addresses : contains(["0.0.0.0/0", "::/0"], a)])
+    error_message = "0.0.0.0/0 and ::/0 need allow_ssh_from_anywhere = true."
+  }
+}
+
+variable "allow_ssh_from_anywhere" {
+  type        = bool
+  default     = false
+  description = "Permits 0.0.0.0/0 or ::/0 in ssh_source_addresses."
 }
 
 variable "vpc_ip_range" {
   type        = string
   default     = "10.110.0.0/24"
-  description = "VPC range. Must not overlap another VPC in the account."
+  description = "VPC range. Changing it replaces every Droplet. Must not overlap another VPC in the account."
 
   validation {
-    condition     = can(cidrhost(var.vpc_ip_range, 0))
-    error_message = "vpc_ip_range must be a CIDR."
+    condition = try(
+      cidrhost(var.vpc_ip_range, 0) == split("/", var.vpc_ip_range)[0] &&
+      tonumber(split("/", var.vpc_ip_range)[1]) >= 16 &&
+      tonumber(split("/", var.vpc_ip_range)[1]) <= 24 &&
+      can(regex("^(10[.]|172[.](1[6-9]|2[0-9]|3[01])[.]|192[.]168[.])[0-9.]+/[0-9]+$", var.vpc_ip_range)),
+      false
+    )
+    error_message = "vpc_ip_range must be an RFC 1918 IPv4 CIDR with a prefix from /16 to /24 and no host bits set."
   }
 }
 
 variable "repo_url" {
   type        = string
-  description = "HTTPS clone URL of the repo. No credentials."
+  description = "HTTPS clone URL of the public repo. No credentials."
 
   validation {
-    condition     = can(regex("^https://[^@/[:space:]]+/[^@[:space:]]+[.]git$", var.repo_url))
-    error_message = "repo_url must be an https URL ending in .git, with no @."
+    condition     = can(regex("^https://github[.]com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+[.]git$", var.repo_url))
+    error_message = "repo_url must be https://github.com/OWNER/REPO.git with plain name characters."
   }
 }
 
@@ -76,7 +96,7 @@ variable "droplet_sizes" {
   description = "Droplet size slug per role."
 
   validation {
-    condition     = length(setsubtract(keys(var.droplet_sizes), ["data", "app", "ingest"])) == 0 && length(keys(var.droplet_sizes)) == 3
+    condition     = toset(keys(var.droplet_sizes)) == toset(["data", "app", "ingest"])
     error_message = "droplet_sizes keys must be exactly data, app and ingest."
   }
 }

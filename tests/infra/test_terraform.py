@@ -1,5 +1,6 @@
 """Checks the Terraform config by parsing the .tf files. No network, no terraform binary."""
 
+import re
 from pathlib import Path
 from typing import Any, Final
 
@@ -7,7 +8,21 @@ import hcl2
 
 TF_DIR: Final[Path] = Path(__file__).resolve().parents[2] / "infra" / "terraform"
 CLOUD_INIT_DIR: Final[Path] = TF_DIR.parent / "cloud-init"
-FIREWALLS: Final[frozenset[str]] = frozenset({"base", "data", "app"})
+FIREWALLS: Final[frozenset[str]] = frozenset({"base", "data", "app", "ingest"})
+ROLES: Final[tuple[str, ...]] = ("data", "app", "ingest")
+SSH_PORT_EXPR: Final[str] = "tostring(var.ssh_port)"
+COMMENTS_KEY: Final[str] = "__comments__"
+INTERNET: Final[list[str]] = ["0.0.0.0/0", "::/0"]
+# (protocol, port_range, destinations) for each role's egress.
+EGRESS: Final[set[tuple[str, str, tuple[str, ...]]]] = {
+    ("tcp", "80", tuple(INTERNET)),
+    ("tcp", "443", tuple(INTERNET)),
+    ("tcp", "53", tuple(INTERNET)),
+    ("udp", "53", tuple(INTERNET)),
+    ("udp", "123", tuple(INTERNET)),
+    ("tcp", "1-65535", ("var.vpc_ip_range",)),
+    ("udp", "1-65535", ("var.vpc_ip_range",)),
+}
 BLOCK_MARKER: Final[str] = "__is_block__"
 
 
@@ -32,7 +47,7 @@ def load_tf() -> dict[str, list[Any]]:
     for path in sorted(TF_DIR.glob("*.tf")):
         parsed = hcl2.loads(path.read_text(encoding="utf-8"))
         for block_type, blocks in parsed.items():
-            if block_type == "__comments__":
+            if block_type == COMMENTS_KEY:
                 continue
             merged.setdefault(block_type, []).extend(blocks)
     return merged
@@ -70,13 +85,17 @@ def ssh_port_default() -> int:
     return port
 
 
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
+
+
 def ports_of(rule: dict[str, Any]) -> set[int]:
-    """Ports a rule opens. A missing port range on tcp or udp means all ports."""
+    """Ports a rule opens. icmp opens none. tcp and udp rules must set port_range."""
     if rule["protocol"] == "icmp":
         return set()
     spec = rule.get("port_range")
     assert spec, "tcp and udp rules need a port_range"
-    if spec == "tostring(var.ssh_port)":
+    if spec == SSH_PORT_EXPR:
         return {ssh_port_default()}
     low, _, high = spec.partition("-")
     return set(range(int(low), int(high or low) + 1))
@@ -96,6 +115,20 @@ def open_ports(firewall: str) -> set[int]:
         assert rule["protocol"] == "tcp"
         result |= ports_of(rule)
     return result
+
+
+def variable_regex(variable: str) -> str:
+    """The regex literal that a validation of `variable` passes to regex()."""
+    for validation in variables()[variable]["validation"]:
+        match = re.search(r'regex\("(.+?)", var\.' + variable + r"\)", validation["condition"])
+        if match:
+            return match.group(1)
+    raise AssertionError(f"no regex validation on {variable}")
+
+
+def matches(pattern: str, value: str) -> bool:
+    """Whole-string match, like RE2 without the multiline flag."""
+    return re.match(pattern.replace("$", r"\Z"), value) is not None
 
 
 def test_provider_version_is_exact() -> None:
@@ -134,13 +167,14 @@ def test_port_22_never_open() -> None:
         assert 22 not in open_ports(firewall)
 
 
-def test_data_ports_only_from_vpc_on_data() -> None:
-    rules = inbound_rules()
-    for firewall, rule_list in rules.items():
+def test_data_ports_only_from_app_and_ingest_tags_on_data() -> None:
+    expected = ['digitalocean_tag.role["app"].id', 'digitalocean_tag.role["ingest"].id']
+    for firewall, rule_list in inbound_rules().items():
         for rule in rule_list:
             if ports_of(rule) & {5432, 9000}:
                 assert firewall == "data"
-                assert rule["source_addresses"] == ["var.vpc_ip_range"]
+                assert rule["source_tags"] == expected
+                assert "source_addresses" not in rule
     assert open_ports("data") == {5432, 9000}
 
 
@@ -157,16 +191,24 @@ def test_no_other_inbound_ports() -> None:
     assert every == {ssh_port_default(), 443, 5432, 9000}
 
 
-def test_ssh_rule_uses_allow_list() -> None:
+def test_ssh_rule_port_is_the_variable() -> None:
     (rule,) = inbound_rules()["base"]
+    assert rule["port_range"] == SSH_PORT_EXPR
+    assert rule["protocol"] == "tcp"
     assert rule["source_addresses"] == "var.ssh_source_addresses"
 
 
-def test_base_firewall_allows_egress() -> None:
-    outbound = resources("digitalocean_firewall")["base"]["outbound_rule"]
-    assert {rule["protocol"] for rule in outbound} == {"tcp", "udp", "icmp"}
-    for rule in outbound:
-        assert rule["destination_addresses"] == ["0.0.0.0/0", "::/0"]
+def test_role_egress_is_exactly_the_allowed_set() -> None:
+    firewalls = resources("digitalocean_firewall")
+    assert "outbound_rule" not in firewalls["base"]
+    for role in ROLES:
+        rules = firewalls[role]["outbound_rule"]
+        got = {
+            (r["protocol"], r["port_range"], tuple(_as_list(r["destination_addresses"])))
+            for r in rules
+        }
+        assert got == EGRESS, role
+        assert len(rules) == len(EGRESS), role
 
 
 def test_firewalls_attach_by_tag() -> None:
@@ -195,8 +237,21 @@ def test_droplet_region_image_vpc_sizes() -> None:
 def test_droplets_wait_for_firewalls_and_ignore_user_data() -> None:
     node = resources("digitalocean_droplet")["node"]
     assert set(node["depends_on"]) == {f"digitalocean_firewall.{name}" for name in FIREWALLS}
+    assert len(node["depends_on"]) == len(FIREWALLS)
     ignored = node["lifecycle"][0]["ignore_changes"]
     assert {"user_data", "ssh_keys"} <= set(ignored)
+
+
+def test_droplets_carry_firewall_tags() -> None:
+    node = resources("digitalocean_droplet")["node"]
+    assert node["tags"] == ["digitalocean_tag.all.id", "digitalocean_tag.role[each.key].id"]
+    tags = resources("digitalocean_tag")
+    assert set(tags) == {"all", "role"}
+    assert tags["role"]["for_each"] == "toset(local.roles)"
+    firewalls = resources("digitalocean_firewall")
+    assert firewalls["base"]["tags"] == ["digitalocean_tag.all.id"]
+    for role in ROLES:
+        assert firewalls[role]["tags"] == [f'digitalocean_tag.role["{role}"].id']
 
 
 def test_outputs_present() -> None:
@@ -219,3 +274,77 @@ def test_lock_file_matches_pinned_version() -> None:
     assert unwrap(name) == "registry.terraform.io/digitalocean/digitalocean"
     assert unwrap(body["version"]) == pinned
     assert any(unwrap(h).startswith("h1:") for h in body["hashes"])
+
+
+def condition_of(variable: str, needle: str) -> str:
+    for validation in variables()[variable]["validation"]:
+        if needle in validation["condition"]:
+            return str(validation["condition"])
+    raise AssertionError(f"no validation on {variable} mentions {needle}")
+
+
+def test_repo_url_validation_rejects_yaml_breaking_values() -> None:
+    pattern = variable_regex("repo_url")
+    assert matches(pattern, "https://github.com/owner/repo.git")
+    assert matches(pattern, "https://github.com/Owner-1/re.po_x-y.git")
+    bad = [
+        'https://github.com/o/r".git',
+        "https://github.com/o/r'.git",
+        "https://github.com/o/r" + chr(92) + "x.git",
+        "https://github.com/o/a,b.git",
+        "https://github.com/o/[x].git",
+        "https://github.com/o/{x}.git",
+        "https://github.com/o/r.git\n",
+        "https://github.com/o/r .git",
+        "https://github.com/o/r#x.git",
+        "https://user:tok@github.com/o/r.git",
+        "https://github.com@evil.com/o/r.git",
+        "https://evil.com/o/r.git",
+        "http://github.com/o/r.git",
+        "https://github.com/o/r",
+    ]
+    for value in bad:
+        assert not matches(pattern, value), value
+
+
+def test_ssh_public_key_validation() -> None:
+    pattern = variable_regex("ssh_public_key")
+    assert matches(pattern, "ssh-ed25519 AAAAC3Nza operator@laptop")
+    assert matches(pattern, "ssh-rsa AAAAB3Nza==")
+    assert matches(pattern, "sk-ssh-ed25519@openssh.com AAAAGnNr operator@laptop")
+    for value in [
+        "ssh-ed25519 AAAA\nssh-rsa BBBB",
+        'ssh-ed25519 AAAA "x"',
+        "ssh-dss AAAA x",
+        "sk-ssh-ed25519@opensshXcom AAAA x",
+    ]:
+        assert not matches(pattern, value), value
+
+
+def test_ssh_source_validation_blocks_anywhere_and_host_bits() -> None:
+    declared = variables()
+    flag = declared["allow_ssh_from_anywhere"]
+    assert flag["type"] == "bool"
+    assert flag["default"] is False
+    anywhere = condition_of("ssh_source_addresses", "allow_ssh_from_anywhere")
+    assert '"0.0.0.0/0"' in anywhere
+    assert '"::/0"' in anywhere
+    host_bits = condition_of("ssh_source_addresses", "cidrhost")
+    assert 'split("/", a)[0]' in host_bits
+    assert "length(var.ssh_source_addresses) > 0" in host_bits
+
+
+def test_vpc_ip_range_is_private_ipv4_between_16_and_24() -> None:
+    condition = condition_of("vpc_ip_range", "cidrhost")
+    assert ">= 16" in condition
+    assert "<= 24" in condition
+    assert 'split("/", var.vpc_ip_range)[0]' in condition
+    pattern = re.search(r'regex\("(.+?)", var\.vpc_ip_range\)', condition)
+    assert pattern
+    private = pattern.group(1)
+    for good in ["10.110.0.0/24", "172.16.0.0/16", "172.31.4.0/24", "192.168.1.0/24"]:
+        assert matches(private, good), good
+    for bad in ["8.8.8.0/24", "172.32.0.0/16", "172.15.0.0/16", "11.0.0.0/24", "fd00::/64"]:
+        assert not matches(private, bad), bad
+    default = variables()["vpc_ip_range"]["default"]
+    assert matches(private, default)

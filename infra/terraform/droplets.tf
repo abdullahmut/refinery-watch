@@ -23,6 +23,7 @@ resource "digitalocean_droplet" "node" {
     digitalocean_firewall.base,
     digitalocean_firewall.data,
     digitalocean_firewall.app,
+    digitalocean_firewall.ingest,
   ]
 
   lifecycle {

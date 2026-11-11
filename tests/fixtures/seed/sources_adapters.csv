@@ -1,0 +1,5 @@
+source_id,name,tier,region_focus,access_method,feed_url,article_url_pattern,robots_status,fetch_interval_min,notes,verified
+hp_news,Invented HP news,2,Global,rss,https://hp.example.com/rss?feed=news,https://hp.example.com/news/<id>,open,120,Invented row.,no
+hp_refining,Invented HP refining,2,Global,rss,https://hp.example.com/rss?topic=refining,https://hp.example.com/news/<id>,open,120,Invented row.,no
+gdelt_doc,Invented GDELT DOC,3,Global,api,https://gdelt.example.com/api/v2/doc/doc,n/a,open,60,Invented row.,no
+eia_wpsr,Invented EIA weekly,1,US,api,https://eia.example.com/v2/petroleum/pnp/wiup/data/,https://eia.example.com/,open,10080,Invented row.,no

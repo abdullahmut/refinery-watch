@@ -116,6 +116,7 @@ def seed_schema(owner: str, schema: str) -> None:
     """Loads the small fixtures, one fixture source and R9001's CDU capacity, and commits."""
     with open_in_schema(owner, schema) as conn:
         load_sources(conn, SEED_DIR / "sources_small.csv")
+        load_sources(conn, SEED_DIR / "sources_adapters.csv")
         load_refineries(conn, SEED_DIR / "refineries_small.csv")
         conn.execute(
             "INSERT INTO source (id, name, tier, region_focus, access_method, feed_url,"

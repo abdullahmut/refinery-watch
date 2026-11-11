@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from refinery_watch.objects import ObjectStoreError
 from refinery_watch.sources.http import Fetcher
 
 PUBLIC = "93.184.216.34"
@@ -78,3 +79,23 @@ def make_fetcher(
         now=clk.now,
     )
     return fetcher, net, clk
+
+
+class FakeStore:
+    """A dict-backed RawStore. `fail` makes put raise, `on_put` runs before the write."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.types: dict[str, str] = {}
+        self.puts = 0
+        self.fail = False
+        self.on_put: Callable[[str], None] | None = None
+
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        self.puts += 1
+        if self.fail:
+            raise ObjectStoreError(key, "InternalError")
+        if self.on_put is not None:
+            self.on_put(key)
+        self.objects[key] = data
+        self.types[key] = content_type

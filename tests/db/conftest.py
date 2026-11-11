@@ -30,6 +30,12 @@ REDIRECT_ENV = ("PGHOST", "PGHOSTADDR", "PGSERVICE")
 def assert_local(url: str) -> None:
     """Fails unless the URL, its query and the environment all point at loopback."""
     parsed = urlparse(url)
+    if "," in parsed.netloc:
+        pytest.fail("test database URL must name exactly one host")
+    try:
+        parsed.port  # noqa: B018
+    except ValueError:
+        pytest.fail("test database URL has an invalid port")
     if parsed.hostname not in LOCAL_HOSTS:
         pytest.fail(f"test database host must be local, got {parsed.hostname!r}")
     redirects = REDIRECT_PARAMS & set(parse_qs(parsed.query))
@@ -74,6 +80,8 @@ def app_url() -> str:
 def pg_server(owner_url: str, app_url: str) -> str:
     """Checks the server once per session and returns the owner URL."""
     try:
+        with psycopg.connect(app_url, connect_timeout=5) as app_conn:
+            assert_connected_to_loopback(app_conn.info.host, app_conn.info.hostaddr)
         with psycopg.connect(owner_url, connect_timeout=5) as conn:
             version = conn.info.server_version
             assert_connected_to_loopback(conn.info.host, conn.info.hostaddr)

@@ -82,3 +82,21 @@ def test_session_connection_is_loopback(
 ) -> None:
     with connect(pg_server) as conn:
         server_guard(conn.info.host, conn.info.hostaddr)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@127.0.0.1,10.0.0.5:5432/db",
+        "postgresql://u:p@localhost,evil.example.test/db",
+        "postgresql://u:p@127.0.0.1:5432,5433/db",
+    ],
+)
+def test_multi_host_url_is_refused(local_guard: Callable[[str], None], url: str) -> None:
+    with pytest.raises(pytest.fail.Exception, match="one host"):
+        local_guard(url)
+
+
+def test_bad_port_is_refused(local_guard: Callable[[str], None]) -> None:
+    with pytest.raises(pytest.fail.Exception, match="port"):
+        local_guard("postgresql://u:p@127.0.0.1:notaport/db")

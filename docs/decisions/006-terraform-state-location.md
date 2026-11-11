@@ -24,7 +24,8 @@ hand.
 Local state in `infra/terraform/terraform.tfstate`. It holds no token, because the provider reads
 `DIGITALOCEAN_TOKEN` from the shell. The ignore file covers `*.tfstate` and `*.tfstate.*`, and the
 local pre-commit hook refuses any staged state file. After each apply, the operator copies the
-state file to one place off the laptop that is not this repo.
+state file to one encrypted place off the laptop that is not this repo, such as a password manager
+or an encrypted disk.
 
 ## Consequences
 

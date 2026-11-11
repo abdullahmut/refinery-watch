@@ -1,11 +1,15 @@
 """Postgres fixtures. Integration tests fail, never skip, when Postgres is absent."""
 
 import os
-from collections.abc import Callable
+import secrets
+from collections.abc import Callable, Iterator
 from urllib.parse import urlparse
 
 import psycopg
 import pytest
+
+from refinery_watch.db.connect import Conn, connect
+from refinery_watch.db.migrate import upgrade
 
 OWNER_URL = (
     "postgresql://refinery_test_owner:refinery_test_owner@127.0.0.1:5432/refinery_watch_test"
@@ -51,3 +55,63 @@ def pg_server(owner_url: str, app_url: str) -> str:
     if version < 160000:
         pytest.fail(f"Postgres 16 or newer is required, got {version}")
     return owner_url
+
+
+def app_role_of(url: str) -> str:
+    user = urlparse(url).username
+    assert user is not None
+    return user
+
+
+def make_schema(owner: str, app: str) -> str:
+    """Creates and migrates a throwaway schema; returns its name."""
+    name = f"rw_test_{secrets.token_hex(4)}"
+    with psycopg.connect(owner, autocommit=True) as conn:
+        conn.execute(f"CREATE SCHEMA {name}")
+    upgrade(owner, app_role=app_role_of(app), schema=name)
+    return name
+
+
+def drop_schema(owner: str, name: str) -> None:
+    with psycopg.connect(owner, autocommit=True) as conn:
+        conn.execute(f"DROP SCHEMA {name} CASCADE")
+
+
+def open_in_schema(url: str, schema: str) -> Conn:
+    conn = connect(url)
+    conn.execute(f"SET search_path TO {schema}")
+    return conn
+
+
+@pytest.fixture(scope="session")
+def session_schema(pg_server: str, app_url: str) -> Iterator[str]:
+    name = make_schema(pg_server, app_url)
+    yield name
+    drop_schema(pg_server, name)
+
+
+@pytest.fixture
+def fresh_schema(pg_server: str, app_url: str) -> Iterator[str]:
+    name = make_schema(pg_server, app_url)
+    yield name
+    drop_schema(pg_server, name)
+
+
+@pytest.fixture
+def db(session_schema: str, pg_server: str) -> Iterator[Conn]:
+    """Owner connection inside a transaction that is rolled back."""
+    conn = open_in_schema(pg_server, session_schema)
+    conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    yield conn
+    conn.rollback()
+    conn.close()
+
+
+@pytest.fixture
+def app_db(session_schema: str, app_url: str) -> Iterator[Conn]:
+    """App-role connection inside a transaction that is rolled back."""
+    conn = open_in_schema(app_url, session_schema)
+    conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    yield conn
+    conn.rollback()
+    conn.close()

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "refinery-watch"
+version = "0.1.0"
+description = "Refinery outage tracker."
+requires-python = ">=3.12,<3.13"
+dependencies = []
+classifiers = ["Private :: Do Not Upload"]
+
+[tool.uv]
+required-version = ">=0.13.7"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/refinery_watch"]

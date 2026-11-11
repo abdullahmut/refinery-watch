@@ -37,11 +37,11 @@ def test_every_function_pins_search_path_with_pg_temp_last(db: Conn, session_sch
 def temp_granted(pg_server: str, app_url: str) -> Iterator[None]:
     role = psycopg.conninfo.conninfo_to_dict(app_url)["user"]
     with psycopg.connect(pg_server, autocommit=True) as owner:
-        owner.execute(f"GRANT TEMPORARY ON DATABASE refinery_watch_test TO {role}")  # type: ignore[arg-type]
+        owner.execute(f"GRANT TEMPORARY ON DATABASE refinery_watch_test TO {role}")
         try:
             yield
         finally:
-            owner.execute(f"REVOKE TEMPORARY ON DATABASE refinery_watch_test FROM {role}")  # type: ignore[arg-type]
+            owner.execute(f"REVOKE TEMPORARY ON DATABASE refinery_watch_test FROM {role}")
 
 
 def test_temp_table_cannot_shadow_outage_event(

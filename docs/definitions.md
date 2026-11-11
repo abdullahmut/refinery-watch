@@ -99,7 +99,7 @@ Found while labelling the first golden set. Each needs a decision record before 
 
 1. **Old starts mentioned in passing.** The 90-day window rejects a March outage described in a
    July article. Options: keep strict and lose it; allow with `confidence = low` and a flag; widen
-   to 180 days. Leaning: allow with `low`, because the row is still true and the PM would rather
+   to 180 days. Leaning: allow with `low`, because the row is still true and a desk would rather
    see it flagged than not at all.
 2. **Null start date.** "Remains shut, restart undecided" with no start. Options: reject; accept
    with `valid_from` = publication date and a `start_unknown` flag. Leaning: accept, flagged.

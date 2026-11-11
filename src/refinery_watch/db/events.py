@@ -31,6 +31,7 @@ ReviewReason = Literal[
     "restart_before_event_start",
     "ends_event_mismatch",
     "revision_after_restart_date",
+    "restart_in_future",
 ]
 
 REVIEW_SQLSTATES: Final[dict[str, ReviewReason]] = {
@@ -43,6 +44,7 @@ REVIEW_SQLSTATES: Final[dict[str, ReviewReason]] = {
     "RW009": "ends_event_mismatch",
     "RW010": "revision_after_restart_date",
     "RW013": "plant_restart_units_open",
+    "RW015": "restart_in_future",
 }
 SUPERSEDES_KEY: Final = "outage_event_supersedes_key"
 

@@ -83,8 +83,8 @@ def test_rw005_restart_without_open_outage(db: Conn) -> None:
 
 
 def test_rw005_restart_before_the_outage_started(db: Conn) -> None:
-    write(db, known_at=ts(1), start_date=day(10))
-    refused(db, "RW005", restart=True, known_at=ts(2), start_date=day(5))
+    write(db, known_at=ts(10), start_date=day(8))
+    refused(db, "RW005", restart=True, known_at=ts(11), start_date=day(5))
 
 
 def test_rw006_revision_into_an_occupied_unit(db: Conn) -> None:
@@ -226,3 +226,25 @@ def test_root_rows_start_their_own_chain(db: Conn) -> None:
     e2 = write(db, supersedes=e1, known_at=ts(2), start_date=day(2))
     assert column(db, e2, "chain_id") == e1
     assert current_ids(db, ts(3)) == [e2]
+
+
+def test_rw015_restart_dated_after_the_day_it_became_known(db: Conn) -> None:
+    e1 = write(db, known_at=ts(1))
+    refused(db, "RW015", restart=True, known_at=ts(5), start_date=day(20))
+    assert current_ids(db, ts(10)) == [e1]
+
+
+def test_restart_dated_the_day_it_became_known_is_accepted(db: Conn) -> None:
+    write(db, known_at=ts(1))
+    write_restart(db, known_at=ts(5, 0), start_date=day(5))
+    assert current_ids(db, ts(6)) == []
+
+
+def test_rw015_applies_to_restart_revisions(db: Conn) -> None:
+    write(db, known_at=ts(1))
+    x1 = write_restart(db, known_at=ts(5), start_date=day(5))
+    refused(db, "RW015", restart=True, supersedes=x1, known_at=ts(6), start_date=day(9))
+
+
+def test_outage_dated_in_the_future_is_still_a_planned_turnaround(db: Conn) -> None:
+    write(db, known_at=ts(1), event_type="planned", start_date=day(28))

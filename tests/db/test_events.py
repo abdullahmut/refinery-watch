@@ -96,6 +96,7 @@ def test_restart_gets_ends_event_id_and_revision_gets_chain_id(app_db: Conn) -> 
         ("early_restart", "restart_before_event_start"),
         ("late_revision", "revision_after_restart_date"),
         ("plant_restart", "plant_restart_units_open"),
+        ("future_restart", "restart_in_future"),
     ],
 )
 def test_review_reason_for_each_rule(app_db: Conn, scenario: str, reason: str) -> None:
@@ -127,6 +128,8 @@ def test_review_reason_for_each_rule(app_db: Conn, scenario: str, reason: str) -
         candidate = restart_row(
             app_db, supersedes=x1.id, known_at=ts(6), start_date=date(2025, 10, 30)
         )
+    elif scenario == "future_restart":
+        candidate = restart_row(app_db, known_at=ts(5), start_date=day(20))
     elif scenario == "late_revision":
         must_write(app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), 3)
         candidate = new_row(app_db, supersedes=e1.id, known_at=ts(6), start_date=day(9))

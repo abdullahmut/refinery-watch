@@ -93,6 +93,9 @@ To set `ends_event_id`, look only at rows current at the restart's `known_at`. O
 The one with the latest `start_date` wins. A tie goes to the later `known_at`, then to the lower
 id. If no row qualifies, the restart is not written to `outage_event`. It goes to review.
 
+A restart dated after the day it became known (UTC) is not written. It goes to review, because
+an announced restart is a revision with `expected_restart_date`.
+
 Matching happens once, at write time. It never runs again at query time, so a later event cannot
 take an earlier restart. A restart reported late still ends the event it follows, not one that
 started after the unit came back. This assumes two outages on one unit may both be open; open

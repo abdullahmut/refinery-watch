@@ -42,6 +42,12 @@ BEGIN
     RAISE EXCEPTION 'chain_id is set by the database' USING ERRCODE = 'RW014';
   END IF;
 
+  -- 3b: a restart cannot be dated after the day it became known (UTC)
+  IF NEW.event_type = 'restart' AND NEW.start_date > (NEW.known_at AT TIME ZONE 'UTC')::date THEN
+    RAISE EXCEPTION 'restart date % is after the day it became known', NEW.start_date
+      USING ERRCODE = 'RW015';
+  END IF;
+
   -- 4: a root outage needs a free unit
   IF NEW.supersedes IS NULL AND NEW.event_type <> 'restart' AND EXISTS (
        SELECT 1 FROM outage_as_of(NEW.known_at) o

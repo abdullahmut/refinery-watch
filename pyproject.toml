@@ -9,6 +9,9 @@ description = "Refinery outage tracker."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.20.1",
+    "defusedxml>=0.7.1",
+    "httpx>=0.28.1",
+    "minio>=7.2.20",
     "psycopg[binary]>=3.3.8",
     "sqlalchemy>=2.1.8",
 ]
@@ -28,6 +31,7 @@ dev = [
     "python-hcl2>=8.2.0",
     "pyyaml>=6.0.3",
     "ruff>=0.17.4",
+    "types-defusedxml>=0.7.0.20260504",
     "types-pyyaml>=6.0.12.20261111",
 ]
 

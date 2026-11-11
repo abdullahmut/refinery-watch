@@ -11,6 +11,7 @@ infra/terraform/*.tfvars
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 crash.log
 
 # Python

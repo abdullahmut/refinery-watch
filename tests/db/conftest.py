@@ -4,7 +4,7 @@ import os
 import secrets
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import psycopg
 import pytest
@@ -23,10 +23,32 @@ SEED_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "seed"
 NOT_REACHABLE = "Postgres not reachable on 127.0.0.1:5432. Run make up."
 
 
+REDIRECT_PARAMS = frozenset({"host", "hostaddr", "service"})
+REDIRECT_ENV = ("PGHOST", "PGHOSTADDR", "PGSERVICE")
+
+
 def assert_local(url: str) -> None:
-    host = urlparse(url).hostname
-    if host not in LOCAL_HOSTS:
-        pytest.fail(f"test database host must be local, got {host!r}")
+    """Fails unless the URL, its query and the environment all point at loopback."""
+    parsed = urlparse(url)
+    if parsed.hostname not in LOCAL_HOSTS:
+        pytest.fail(f"test database host must be local, got {parsed.hostname!r}")
+    redirects = REDIRECT_PARAMS & set(parse_qs(parsed.query))
+    if redirects:
+        pytest.fail(f"test database URL query must not set {sorted(redirects)}")
+    for name in REDIRECT_ENV:
+        if os.environ.get(name):
+            pytest.fail(f"{name} is set in the environment; unset it to run the tests")
+
+
+def assert_connected_to_loopback(host: str, hostaddr: str) -> None:
+    """Checks where libpq actually connected. inet_server_addr() is the container address."""
+    if host not in LOCAL_HOSTS or hostaddr not in LOCAL_HOSTS:
+        pytest.fail(f"connected to {host!r} ({hostaddr!r}), not loopback")
+
+
+@pytest.fixture(scope="session")
+def server_guard() -> Callable[[str, str], None]:
+    return assert_connected_to_loopback
 
 
 @pytest.fixture(scope="session")
@@ -54,6 +76,7 @@ def pg_server(owner_url: str, app_url: str) -> str:
     try:
         with psycopg.connect(owner_url, connect_timeout=5) as conn:
             version = conn.info.server_version
+            assert_connected_to_loopback(conn.info.host, conn.info.hostaddr)
     except psycopg.OperationalError:
         pytest.fail(NOT_REACHABLE)
     if version < 160000:

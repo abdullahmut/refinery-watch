@@ -181,3 +181,15 @@ def test_public_has_no_execute_on_trigger_functions(db: Conn) -> None:
     ).fetchall()
     assert rows
     assert not [r["proname"] for r in rows if r["e"]]
+
+
+@pytest.mark.parametrize(
+    ("disabled", "table"),
+    [("event_source_no_truncate", "event_source"), ("outage_event_no_truncate", "outage_event")],
+)
+def test_each_table_has_its_own_truncate_guard(db: Conn, disabled: str, table: str) -> None:
+    """With one table's guard off, truncating the pair is still stopped by the other's."""
+    with pytest.raises(psycopg.Error) as info, db.transaction():
+        db.execute(f"ALTER TABLE {table} DISABLE TRIGGER {disabled}")
+        db.execute("TRUNCATE outage_event, event_source, review_item")
+    assert sqlstate(info) == "RW011"

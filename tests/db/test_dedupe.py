@@ -1,7 +1,16 @@
 from datetime import datetime
 
 import pytest
-from tests.db.helpers import day, ts, unit_id, write, write_restart
+from tests.db.helpers import (
+    day,
+    insert_raw_outage,
+    insert_raw_restart,
+    sourced,
+    ts,
+    unit_id,
+    write,
+    write_restart,
+)
 
 from refinery_watch.db.connect import Conn
 
@@ -170,3 +179,47 @@ def test_closure_not_yet_known_leaves_the_chain_open_for_matching(db: Conn) -> N
     e1 = write(db, known_at=ts(1), start_date=day(1))
     write_restart(db, known_at=ts(5), start_date=day(5))
     assert outage_dup(db, 1, ts(4)) == [e1]
+
+
+def raw_outage(db: Conn, known: datetime, start: int) -> int:
+    return sourced(db, insert_raw_outage(db, known_at=known, start_date=day(start)))
+
+
+def raw_restart(db: Conn, ends: int, known: datetime, start: int) -> int:
+    return sourced(db, insert_raw_restart(db, ends, known_at=known, start_date=day(start)))
+
+
+def test_restart_duplicate_tie_on_start_goes_to_the_later_known_row(db: Conn) -> None:
+    first = raw_outage(db, ts(1), 3)
+    second = raw_outage(db, ts(2), 3)
+    raw_restart(db, first, ts(4), 4)
+    x_second = raw_restart(db, second, ts(5), 5)
+    assert restart_dup(db, 6, ts(6)) == x_second
+
+
+def test_restart_duplicate_tie_on_start_and_known_goes_to_the_lower_id(db: Conn) -> None:
+    first = raw_outage(db, ts(2), 3)
+    second = raw_outage(db, ts(2), 3)
+    x_first = raw_restart(db, first, ts(4), 4)
+    raw_restart(db, second, ts(5), 5)
+    assert first < second
+    assert restart_dup(db, 6, ts(6)) == x_first
+
+
+def test_restart_duplicate_follows_a_restart_that_ends_a_revised_row(db: Conn) -> None:
+    root = write(db, known_at=ts(1), start_date=day(1))
+    revised = write(db, supersedes=root, known_at=ts(2), start_date=day(2))
+    x = write_restart(db, known_at=ts(5), start_date=day(5))
+    assert db.execute("SELECT ends_event_id FROM outage_event WHERE id = %s", (x,)).fetchone() == {
+        "ends_event_id": revised
+    }
+    assert restart_dup(db, 6, ts(6)) == x
+
+
+def test_restart_duplicate_follows_a_restart_that_ends_the_root_after_a_later_revision(
+    db: Conn,
+) -> None:
+    root = write(db, known_at=ts(1), start_date=day(1))
+    x = write_restart(db, known_at=ts(5), start_date=day(5))
+    write(db, supersedes=root, known_at=ts(7), start_date=day(2))
+    assert restart_dup(db, 8, ts(8)) == x

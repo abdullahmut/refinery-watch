@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Final
 
+import hcl2
 import pytest
 import yaml
 
@@ -42,7 +43,7 @@ PG_SETTINGS: Final[dict[str, str]] = {
 POSTGRES_IMAGE: Final[str] = (
     "postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9"
 )
-ROLES_SQL: Final[list[str]] = [
+ROLES_SQL: Final[tuple[str, ...]] = (
     "SET log_min_error_statement TO panic;",
     "\\set VERBOSITY terse",
     "\\getenv owner_pw PG_OWNER_PASSWORD",
@@ -54,7 +55,7 @@ ROLES_SQL: Final[list[str]] = [
     "GRANT CONNECT ON DATABASE refinery_watch TO refinery_app;",
     "REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;",
     "REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;",
-]
+)
 TEST_ROLES: Final[str] = "refinery_test_owner,refinery_test_app"
 HBA_RULES: Final[dict[str, list[tuple[str, ...]]]] = {
     "production": [
@@ -329,7 +330,7 @@ def test_roles_script() -> None:
     assert "_pw" not in command and "PASSWORD" not in command
     assert "--username postgres" in command
     body = text.split("<<'SQL'\n", 1)[1].split("\nSQL", 1)[0].splitlines()
-    assert body == ROLES_SQL
+    assert tuple(body) == ROLES_SQL
     assert not re.search(r"PASSWORD\s+'", text)
 
 
@@ -398,10 +399,34 @@ def test_make_up_and_down() -> None:
 
 
 def test_hba_allows_only_the_terraform_vpc_range() -> None:
-    text = (ROOT / "infra" / "terraform" / "variables.tf").read_text(encoding="utf-8")
-    match = re.search(r'variable "vpc_ip_range" \{.*?default\s*=\s*"([^"]+)"', text, re.DOTALL)
-    assert match
+    parsed = hcl2.loads((ROOT / "infra" / "terraform" / "variables.tf").read_text(encoding="utf-8"))
+    (default,) = (
+        body["default"]
+        for block in parsed["variable"]
+        for name, body in block.items()
+        if name.strip('"') == "vpc_ip_range"
+    )
     allowed = {
         rule[3] for rule in hba_rules("production") if rule[0] == "host" and rule[4] != "reject"
     }
-    assert allowed == {match.group(1)}
+    assert allowed == {default.strip('"')}
+
+
+def test_test_app_role_matches_production_app_role() -> None:
+    path = COMPOSE_DIR / "postgres" / "initdb-local" / "20-test-roles.sql"
+    statements = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("--")
+    ]
+    expected = [
+        line.replace("refinery_app", "refinery_test_app")
+        .replace("refinery_owner", "refinery_test_owner")
+        .replace("refinery_watch", "refinery_watch_test")
+        for line in ROLES_SQL
+        if line.startswith(("CREATE ", "REVOKE ALL", "GRANT "))
+    ]
+    password = re.compile(r"PASSWORD (:'\w+'|'\w+')")
+    assert [password.sub("PASSWORD x", s) for s in statements] == [
+        password.sub("PASSWORD x", s) for s in expected
+    ]

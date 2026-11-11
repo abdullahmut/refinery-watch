@@ -209,7 +209,7 @@ above, on a box that holds no data.
 Verify: from the laptop, `ssh -p <ssh_port> deploy@<public ip>` logs in, and
 `nc -vz -w 5 <public ip> 22` times out.
 
-## Start Postgres on the data VM
+## Start Postgres on the data Droplet
 
 Symptom: the data Droplet is new, or Postgres is not running and nothing has started it.
 
@@ -217,8 +217,9 @@ Likely cause: first setup. Nothing starts the stack by itself the first time.
 
 Put `.env` in `/opt/refinery-watch`, owned by `deploy`, mode `0600`. Set `POSTGRES_PASSWORD`,
 `PG_OWNER_PASSWORD` and `PG_APP_PASSWORD` to fresh values from `openssl rand -hex 24`. Set
-`DATA_BIND_ADDR` to `private_ipv4["data"]` from `terraform output private_ipv4`. Then, on the
-Droplet:
+`DATA_BIND_ADDR` to `private_ipv4["data"]` from `terraform output private_ipv4`. It must start
+with the VPC prefix `10.110.0.`. Any other value is a mistake: Postgres only accepts clients from
+`10.110.0.0/24`. Then, on the Droplet:
 
 ```
 cd /opt/refinery-watch
@@ -237,10 +238,19 @@ docker stats --no-stream
 free -m
 ```
 
-- `ps` shows `postgres` as `healthy`.
+- `ps` shows `postgres` as `healthy`. The check needs the `refinery_app` role, so `unhealthy` after
+  a first start means the init script failed. Read `docker compose ... logs postgres`, then see
+  the reset rule below.
 - `ss` shows 5432 on the private address only, never `0.0.0.0` or `*`.
 - `docker stats` shows memory under the 384 MiB limit.
 - Write down the `available` column of `free -m`. It must be at least 500 MB.
+
+Recorded value: none yet.
+
+If the first init failed, the data volume now holds a cluster without roles and the script will
+not run again. On a Droplet with no data yet, run `docker compose ... down`, then
+`docker volume rm refinery-watch-data_pgdata`, fix the cause and run `up` again. Never do this
+once the database holds data.
 
 ## Postgres down after a reboot
 
@@ -267,23 +277,35 @@ alone changes nothing inside Postgres.
 
 Likely cause: roles are created once, on an empty data volume.
 
-Edit `.env` first. Then set the new password in Postgres. This reads the value from `.env` on the
-Droplet and never prints it. Example for the app role:
+Edit `.env` first. Then load it into your shell and set the new password inside Postgres. The
+value travels in the environment and on stdin. It is never in a command line, and the session does
+not log failed statements. Example for the app role, on the Droplet:
 
 ```
 cd /opt/refinery-watch
 set -a; . ./.env; set +a
-docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -u postgres postgres psql -v pw="$PG_APP_PASSWORD" -c "ALTER ROLE refinery_app PASSWORD :'pw'"
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -e PG_APP_PASSWORD -u postgres postgres psql -v ON_ERROR_STOP=1 -d postgres <<'SQL'
+SET log_min_error_statement TO panic;
+\set VERBOSITY terse
+\getenv pw PG_APP_PASSWORD
+ALTER ROLE refinery_app PASSWORD :'pw';
+SQL
 ```
 
-Use `refinery_owner` and `PG_OWNER_PASSWORD` for the owner role. Then restart every service that
-connects as that role, so it reads the new value.
+For the owner role, use `refinery_owner` and `PG_OWNER_PASSWORD` in both places. Then run the `up
+-d` command from the start entry again, so the container environment matches `.env`. Restart every
+service that connects as that role, so it reads the new value.
 
-Verify: connect with the new password from the app Droplet, and confirm the old one is refused:
+Verify. Type the new password at the prompt. Nothing is echoed or stored in history:
 
 ```
-PGPASSWORD=<new> psql -h <data private ip> -U refinery_app -d refinery_watch -c 'select 1'
+read -rs PGPASSWORD && export PGPASSWORD
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -e PGPASSWORD postgres psql -U refinery_app -d refinery_watch -c 'select 1'
+unset PGPASSWORD
 ```
+
+The output shows one row. Then run the same three lines again and type the old password. The
+output must say `password authentication failed for user "refinery_app"`.
 
 ## Reset the laptop database
 

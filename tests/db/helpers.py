@@ -1,5 +1,6 @@
 """Shared builders for database tests. Dates move back one year from the repro days."""
 
+import time
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -166,3 +167,17 @@ def open_in_schema(url: str, schema: str) -> Conn:
         application_name="refinery-watch",
         options=f"-c search_path={schema}",
     )
+
+
+def wait_for_lock_waiter(conn: Conn, timeout: float = 5.0) -> None:
+    """Returns once some session waits on an advisory lock. Fails after the timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+        ).fetchone()
+        conn.rollback()
+        if row is not None and row["n"] > 0:
+            return
+        time.sleep(0.02)
+    raise AssertionError("no session is waiting on the advisory lock")

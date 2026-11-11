@@ -82,3 +82,12 @@ def test_restart_revision_cannot_flip_between_plant_and_unnamed(db: Conn) -> Non
     write(db, known_at=ts(1), **PLANT)
     x = write_restart(db, known_at=ts(3), start_date=day(3), **PLANT)
     refused_restart(db, "RW007", supersedes=x, known_at=ts(4), start_date=day(3), **UNNAMED)
+
+
+def test_restart_duplicate_keeps_plant_and_unnamed_chains_apart(db: Conn) -> None:
+    write(db, known_at=ts(1), **UNNAMED)
+    unnamed_x = write_restart(db, known_at=ts(3), start_date=day(3), **UNNAMED)
+    write(db, known_at=ts(4), **PLANT)
+    plant_x = write_restart(db, known_at=ts(6), start_date=day(6), **PLANT)
+    assert restart_duplicate_of(db, "R9001", None, day(7), ts(7), whole_plant=True) == plant_x
+    assert restart_duplicate_of(db, "R9001", None, day(7), ts(7), whole_plant=False) == unnamed_x

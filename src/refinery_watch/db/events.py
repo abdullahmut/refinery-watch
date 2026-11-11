@@ -55,7 +55,8 @@ REVIEW_SQLSTATES: Final[dict[str, ReviewReason]] = {
     "RW015": "restart_in_future",
 }
 SUPERSEDES_KEY: Final = "outage_event_supersedes_key"
-LOCK_TIMEOUT = "10s"
+LOCK_TIMEOUT: Final = "10s"
+WRITE_LOCK_KEY: Final = 7746001
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +102,14 @@ class Review:
 
 @dataclass(frozen=True, slots=True)
 class Duplicate:
-    """The report is already in the table. Its source was added as corroboration."""
+    """The report is already in the table.
+
+    corroboration_added is False when the same document was already linked to the chain.
+    """
 
     chain_id: int
     corroborated_event_id: int
+    corroboration_added: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,10 +194,15 @@ def insert_event(conn: Conn, row: NewEventRow) -> Written:
 
 
 def invalid_capacity(row: NewEventRow) -> bool:
-    amount = row.capacity_affected_kbd
+    amount: object = row.capacity_affected_kbd
     if (row.capacity_basis == "not_stated") != (amount is None):
         return True
-    return amount is not None and not (amount.is_finite() and amount > 0)
+    if amount is None:
+        return False
+    if isinstance(amount, bool) or not isinstance(amount, Decimal | int):
+        return True
+    value = Decimal(amount)
+    return not (value.is_finite() and value > 0)
 
 
 def validate(row: NewEventRow) -> Review | None:
@@ -251,8 +261,26 @@ def set_lock_timeout(conn: Conn, value: str) -> str:
     return previous
 
 
+def take_write_lock(conn: Conn) -> None:
+    """Takes the writers' lock on the caller's transaction. It is held until commit or rollback.
+
+    Raises if the transaction is not READ COMMITTED or if the lock is not free within
+    LOCK_TIMEOUT.
+    """
+    cursor = conn.execute("SELECT current_setting('transaction_isolation') AS level")
+    if require_row(cursor.fetchone())["level"] != "read committed":
+        raise RuntimeError("event writes need a READ COMMITTED transaction")
+    previous = set_lock_timeout(conn, LOCK_TIMEOUT)
+    conn.execute("SELECT pg_advisory_xact_lock(%s)", (WRITE_LOCK_KEY,))
+    set_lock_timeout(conn, previous)
+
+
 def is_new_outage(row: NewEventRow) -> bool:
     return row.supersedes is None and row.event_type != "restart"
+
+
+def is_new_restart(row: NewEventRow) -> bool:
+    return row.supersedes is None and row.event_type == "restart"
 
 
 def corroborate(conn: Conn, chain_id: int, source: SourceLink) -> Duplicate:
@@ -263,42 +291,55 @@ def corroborate(conn: Conn, chain_id: int, source: SourceLink) -> Duplicate:
         with conn.transaction():
             add_corroboration(conn, event_id, source)
     except psycopg.errors.UniqueViolation:
-        pass
-    return Duplicate(chain_id, event_id)
+        return Duplicate(chain_id, event_id, corroboration_added=False)
+    return Duplicate(chain_id, event_id, corroboration_added=True)
+
+
+def find_duplicate_chains(conn: Conn, row: NewEventRow, as_of: datetime) -> list[int]:
+    """Chains the new row repeats. A restart can repeat at most one."""
+    if is_new_restart(row):
+        found = restart_duplicate_of(
+            conn, row.refinery_id, row.refinery_unit_id, row.start_date, as_of, row.whole_plant
+        )
+        return [] if found is None else [found]
+    return outage_duplicate_of(
+        conn,
+        row.refinery_id,
+        row.refinery_unit_id,
+        row.whole_plant,
+        row.start_date,
+        row.start_unknown,
+        as_of,
+    )
 
 
 def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | Review | Duplicate:
-    """Writes one row and its primary source in a savepoint.
+    """Writes one row and its primary source.
 
-    A new outage that matches existing chains, open or closed, is not written. One match returns
-    a Duplicate and the source is added as corroboration. Several matches return a Review.
-    Rule failures return a Review. Other database errors are raised.
+    The writers' lock is taken first, on the caller's transaction, so the duplicate lookup and
+    the insert see the same rows. The lock lasts until the transaction ends: the caller must
+    commit or roll back straight after this returns. The transaction must be READ COMMITTED,
+    else this raises, and a lock wait longer than LOCK_TIMEOUT raises 55P03.
+
+    A new outage or restart that repeats an existing chain is not written. One match returns a
+    Duplicate and the source is added as corroboration. Several matches return a Review. Rule
+    failures return a Review. Other database errors are raised.
     """
     require_aware(row.known_at, "known_at")
     invalid = validate(row)
     if invalid is not None:
         return invalid
-    if is_new_outage(row):
-        as_of = row.known_at or database_now(conn)
-        chains = outage_duplicate_of(
-            conn,
-            row.refinery_id,
-            row.refinery_unit_id,
-            row.whole_plant,
-            row.start_date,
-            row.start_unknown,
-            as_of,
-        )
+    take_write_lock(conn)
+    if row.supersedes is None:
+        chains = find_duplicate_chains(conn, row, row.known_at or database_now(conn))
         if len(chains) > 1:
             return Review("ambiguous_duplicate", f"matches chains {chains}")
         if chains:
             return corroborate(conn, chains[0], source)
     try:
         with conn.transaction():
-            previous = set_lock_timeout(conn, LOCK_TIMEOUT)
             written = insert_event(conn, row)
             insert_source(conn, written.id, source, "primary")
-            set_lock_timeout(conn, previous)
     except psycopg.Error as exc:
         review = review_from(exc)
         if review is None:
@@ -308,6 +349,8 @@ def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | R
 
 
 def add_corroboration(conn: Conn, outage_event_id: int, source: SourceLink) -> int:
+    """Adds a corroboration link under the writers' lock. Commit straight after."""
+    take_write_lock(conn)
     return insert_source(conn, outage_event_id, source, "corroboration")
 
 

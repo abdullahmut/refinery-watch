@@ -1,3 +1,4 @@
+import threading
 import time
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -6,7 +7,14 @@ from typing import Any
 
 import psycopg
 import pytest
-from tests.db.helpers import add_document, day, open_in_schema, ts, unit_id
+from tests.db.helpers import (
+    add_document,
+    day,
+    open_in_schema,
+    ts,
+    unit_id,
+    wait_for_lock_waiter,
+)
 
 from refinery_watch.db import events
 from refinery_watch.db.connect import Conn
@@ -172,12 +180,11 @@ def test_unknown_error_is_raised_not_returned(app_db: Conn) -> None:
     assert info.value.sqlstate == "RW002"
 
 
-def test_rw001_is_raised(app_db: Conn) -> None:
+def test_write_event_refuses_a_repeatable_read_transaction(app_db: Conn) -> None:
     app_db.rollback()
     app_db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-    with pytest.raises(psycopg.Error) as info:
+    with pytest.raises(RuntimeError, match="READ COMMITTED"):
         write_event(app_db, new_row(app_db), link(app_db, 1))
-    assert info.value.sqlstate == "RW001"
 
 
 def test_connection_stays_usable_after_a_review(app_db: Conn) -> None:
@@ -244,7 +251,7 @@ def test_late_report_of_a_closed_outage_is_a_duplicate_not_a_new_root(app_db: Co
     e1 = must_write(app_db, new_row(app_db), 1)
     must_write(app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), 2)
     result = write_event(app_db, new_row(app_db, known_at=ts(7)), link(app_db, 3))
-    assert result == Duplicate(chain_id=e1.chain_id, corroborated_event_id=e1.id)
+    assert result == Duplicate(e1.chain_id, e1.id, corroboration_added=True)
     assert outage_as_of(app_db, ts(8)) == []
     sources = app_db.execute(
         "SELECT role FROM event_source WHERE outage_event_id = %s ORDER BY id", (e1.id,)
@@ -272,6 +279,7 @@ def test_same_document_twice_is_still_a_duplicate(app_db: Conn) -> None:
     same = write_event(app_db, new_row(app_db, known_at=ts(2)), first_link)
     assert isinstance(same, Duplicate)
     assert same.chain_id == e1.chain_id
+    assert not same.corroboration_added
 
 
 def test_two_matching_chains_are_ambiguous(app_db: Conn) -> None:
@@ -401,3 +409,83 @@ def test_late_report_of_e1_is_not_ambiguous_with_a_retrip(app_db: Conn) -> None:
     )
     assert isinstance(result, Duplicate)
     assert result.chain_id == e1.chain_id
+
+
+def test_second_report_of_a_restart_is_a_duplicate_not_a_review(app_db: Conn) -> None:
+    must_write(app_db, new_row(app_db), 1)
+    x1 = must_write(app_db, restart_row(app_db, known_at=ts(5), start_date=day(5)), 2)
+    again = restart_row(app_db, known_at=ts(6), start_date=day(5))
+    result = write_event(app_db, again, link(app_db, 3))
+    assert result == Duplicate(x1.chain_id, x1.id, corroboration_added=True)
+    count = app_db.execute("SELECT count(*) AS n FROM outage_event WHERE event_type = 'restart'")
+    assert count.fetchone() == {"n": 1}
+
+
+def test_integer_capacity_is_accepted(app_db: Conn) -> None:
+    row = new_row(app_db, capacity_affected_kbd=200)
+    assert isinstance(write_event(app_db, row, link(app_db, 1)), Written)
+
+
+@pytest.mark.parametrize("bad", [200.0, "200", True, float("nan")])
+def test_other_capacity_types_are_a_review_not_a_crash(app_db: Conn, bad: Any) -> None:
+    result = write_event(app_db, new_row(app_db, capacity_affected_kbd=bad), link(app_db, 1))
+    assert isinstance(result, Review)
+    assert result.reason == "invalid_capacity"
+
+
+def test_add_corroboration_takes_the_write_lock(
+    monkeypatch: pytest.MonkeyPatch, seeded_schema: str, app_url: str
+) -> None:
+    setup = open_in_schema(app_url, seeded_schema)
+    e1 = must_write(setup, new_row(setup, known_at=None), 1)
+    setup.commit()
+    holder = open_in_schema(app_url, seeded_schema)
+    adder = open_in_schema(app_url, seeded_schema)
+    try:
+        holder.execute("SELECT pg_advisory_xact_lock(7746001)")
+        monkeypatch.setattr(events, "LOCK_TIMEOUT", "300ms")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            add_corroboration(adder, e1.id, link(adder, 2))
+    finally:
+        for conn in (setup, holder, adder):
+            conn.close()
+
+
+@pytest.mark.parametrize("cdu_first", [True, False])
+def test_concurrent_cdu_and_unnamed_reports_give_one_root_and_one_duplicate(
+    seeded_schema: str, app_url: str, cdu_first: bool
+) -> None:
+    a = open_in_schema(app_url, seeded_schema)
+    b = open_in_schema(app_url, seeded_schema)
+    watcher = open_in_schema(app_url, seeded_schema)
+    outcome: list[Written | Review | Duplicate] = []
+
+    def named(conn: Conn) -> NewEventRow:
+        return new_row(conn, known_at=None)
+
+    def unnamed(conn: Conn) -> NewEventRow:
+        return new_row(conn, known_at=None, refinery_unit_id=None)
+
+    first, second = (named, unnamed) if cdu_first else (unnamed, named)
+
+    def late_writer() -> None:
+        outcome.append(write_event(b, second(b), link(b, 2)))
+        b.commit()
+
+    try:
+        first_result = write_event(a, first(a), link(a, 1))
+        thread = threading.Thread(target=late_writer)
+        thread.start()
+        wait_for_lock_waiter(watcher)
+        assert thread.is_alive(), "the second writer did not wait for the lock"
+        a.commit()
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+        assert isinstance(first_result, Written)
+        assert isinstance(outcome[0], Duplicate)
+        assert outcome[0].chain_id == first_result.chain_id
+        roots = a.execute("SELECT count(*) AS n FROM outage_event").fetchone()
+        assert roots == {"n": 1}
+    finally:
+        for conn in (a, b, watcher):
+            conn.close()

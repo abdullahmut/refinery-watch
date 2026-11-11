@@ -381,6 +381,8 @@ def test_make_up_and_down() -> None:
         in up[1]
     )
     assert "up -d --wait --wait-timeout 180" in up[2]
+    assert up[2].startswith("docker compose -p refinery-watch-local ")
+    assert down[1].startswith("docker compose -p refinery-watch-local ")
     assert down[0].startswith("docker info ")
     assert 'echo "down: Docker is not running. Nothing to stop." >&2' in down[0]
     assert down[1].endswith("compose.local.yaml down")

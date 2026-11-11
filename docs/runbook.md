@@ -290,18 +290,24 @@ PGPASSWORD=<new> psql -h <data private ip> -U refinery_app -d refinery_watch -c 
 Symptom: the laptop database needs a clean start, or the test roles are missing because the volume
 was created before `20-test-roles.sql` existed. Init scripts run only on an empty volume.
 
-Likely cause: the volume `refinery-watch-data_pgdata` already holds an older cluster.
+Likely cause: the volume `refinery-watch-local_pgdata` already holds an older cluster. The laptop
+stack runs as project `refinery-watch-local`, so it never shares a volume with the Droplet stack.
 
 Laptop only. Never on the Droplet: this deletes all data.
 
 ```
 make down
-docker volume rm refinery-watch-data_pgdata
+docker volume rm refinery-watch-local_pgdata
 make up
 ```
 
-Verify:
+An older laptop volume named `refinery-watch-data_pgdata` is no longer used. Remove it with
+`docker volume rm refinery-watch-data_pgdata` if it exists.
+
+Verify, over the container's own socket:
 
 ```
-psql "postgresql://refinery_test_owner:refinery_test_owner@127.0.0.1:5432/refinery_watch_test" -c "select 1"
+docker compose -p refinery-watch-local --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.local.yaml exec -T -e PGPASSWORD=refinery_test_owner postgres psql -U refinery_test_owner -d refinery_watch_test -c 'select 1'
 ```
+
+The output shows one row with `1`.

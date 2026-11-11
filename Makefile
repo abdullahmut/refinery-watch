@@ -17,7 +17,7 @@ tf-check:
 	terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
 	terraform -chdir=infra/terraform validate
 
-COMPOSE_LOCAL := docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.local.yaml
+COMPOSE_LOCAL := docker compose -p refinery-watch-local --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.local.yaml
 
 up:
 	[ -f .env ] || { echo "up: .env not found at the repo root. Copy .env.example to .env and fill it in." >&2; exit 1; }

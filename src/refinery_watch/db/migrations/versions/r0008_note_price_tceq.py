@@ -30,7 +30,8 @@ STATEMENTS = [
       summary_called_at    timestamptz,
       summary_tokens_in    integer CHECK (summary_tokens_in >= 0),
       summary_tokens_out   integer CHECK (summary_tokens_out >= 0),
-      summary_cost_usd     numeric(10,6) CHECK (summary_cost_usd >= 0),
+      summary_cost_usd     numeric(10,6) CHECK (summary_cost_usd >= 0
+                          AND summary_cost_usd < 'Infinity'),
       sent_at              timestamptz,
       provider_message_id  text,
       CHECK (summary IS NULL OR summary_model IS NOT NULL),
@@ -50,7 +51,8 @@ STATEMENTS = [
       id               bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       series           text NOT NULL CHECK (series ~ '^[a-z0-9_.]+$'),
       observed_on      date NOT NULL,
-      value            numeric(14,4) NOT NULL,
+      value            numeric(14,4) NOT NULL
+                         CHECK (value > '-Infinity' AND value < 'Infinity'),
       unit             text NOT NULL,
       source_id        text NOT NULL REFERENCES source(id),
       raw_document_id  bigint REFERENCES raw_document(id),

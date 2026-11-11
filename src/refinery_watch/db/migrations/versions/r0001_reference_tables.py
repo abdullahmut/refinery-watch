@@ -21,7 +21,7 @@ STATEMENTS = [
       region         text NOT NULL CHECK (region IN ('US Gulf','US other','NW Europe','Med',
                        'Middle East','Singapore','NE Asia','India','China','Other')),
       owner          text,
-      nameplate_kbd  numeric(7,1) CHECK (nameplate_kbd > 0),
+      nameplate_kbd  numeric(7,1) CHECK (nameplate_kbd > 0 AND nameplate_kbd < 'Infinity'),
       status         text NOT NULL CHECK (status IN ('operating','closed_or_converted')),
       source_url     text,
       verified       boolean NOT NULL DEFAULT false,
@@ -38,7 +38,7 @@ STATEMENTS = [
       unit_code     text NOT NULL CHECK (unit_code IN ('CDU','VDU','FCC','HCU','COK','REF',
                       'HDT_D','HDT_G','ALK','ISOM','SRU','H2','RHU')),
       unit_tag      text NOT NULL DEFAULT '',
-      capacity_kbd  numeric(7,1) CHECK (capacity_kbd > 0),
+      capacity_kbd  numeric(7,1) CHECK (capacity_kbd > 0 AND capacity_kbd < 'Infinity'),
       UNIQUE (refinery_id, unit_code, unit_tag),
       UNIQUE (id, refinery_id)
     )

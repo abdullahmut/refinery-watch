@@ -63,7 +63,7 @@ STATEMENTS = [
       called_at        timestamptz NOT NULL DEFAULT clock_timestamp(),
       tokens_in        integer NOT NULL CHECK (tokens_in >= 0),
       tokens_out       integer NOT NULL CHECK (tokens_out >= 0),
-      cost_usd         numeric(10,6) NOT NULL CHECK (cost_usd >= 0),
+      cost_usd         numeric(10,6) NOT NULL CHECK (cost_usd >= 0 AND cost_usd < 'Infinity'),
       status           text NOT NULL CHECK (status IN ('ok','invalid_output','api_error')),
       raw_output       text,
       output           jsonb,

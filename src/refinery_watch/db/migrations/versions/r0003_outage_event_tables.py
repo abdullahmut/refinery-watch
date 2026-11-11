@@ -23,7 +23,8 @@ STATEMENTS = [
       refinery_unit_id       bigint,
       whole_plant            boolean NOT NULL DEFAULT false,
       unit_label             text,
-      capacity_affected_kbd  numeric(7,1) CHECK (capacity_affected_kbd > 0),
+      capacity_affected_kbd  numeric(7,1) CHECK (capacity_affected_kbd > 0
+                           AND capacity_affected_kbd < 'Infinity'),
       capacity_basis         text NOT NULL CHECK (capacity_basis IN ('stated','unit_reference',
                                'plant_nameplate','not_stated')),
       start_date             date NOT NULL,

@@ -189,9 +189,12 @@ def parse_decimal(path: Path, line: int, column: str, value: str) -> Decimal | N
     if not value:
         return None
     try:
-        return Decimal(value)
+        number = Decimal(value)
     except InvalidOperation:
         raise fail(path, line, column, f"must be a number, got {value!r}") from None
+    if not number.is_finite():
+        raise fail(path, line, column, f"must be a finite number, got {value!r}")
+    return number
 
 
 def parse_date(path: Path, line: int, column: str, value: str) -> date | None:

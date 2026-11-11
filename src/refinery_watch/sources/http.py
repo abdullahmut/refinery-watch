@@ -90,14 +90,31 @@ def strip_tracking(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), ""))
 
 
+EMBEDDED_V4_NETWORKS: Final = tuple(
+    ipaddress.ip_network(n) for n in ("::/96", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16")
+)
+
+
 def _public(address: str) -> bool:
+    """True for a global unicast address. IPv6 forms that embed an IPv4 address are refused."""
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])
     except ValueError:
         return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        elif any(ip in net for net in EMBEDDED_V4_NETWORKS):
+            return False
     return ip.is_global and not ip.is_multicast
+
+
+def host_key(url: str) -> str:
+    """The ASCII host httpx connects to (IDNA 2008), lower case. Empty when the URL has none."""
+    try:
+        return httpx.URL(url).raw_host.decode("ascii").lower()
+    except (httpx.InvalidURL, UnicodeError):
+        return (urlsplit(url).hostname or "").lower()
 
 
 def _charset(content_type_header: str) -> str | None:
@@ -134,6 +151,44 @@ class _Stop:
     block: bool
 
 
+class PinnedTransport(httpx.BaseTransport):
+    """Sends each request to the address the guard validated, not to a fresh DNS answer.
+
+    With connect_by_ip the URL host becomes the IP. The Host header keeps the name, and
+    sni_hostname keeps it for TLS, so certificate checks still use the name.
+    """
+
+    def __init__(
+        self, inner: httpx.BaseTransport, pins: dict[str, str], *, connect_by_ip: bool
+    ) -> None:
+        self._inner = inner
+        self._pins = pins
+        self._connect_by_ip = connect_by_ip
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        name = request.url.raw_host.decode("ascii").lower()
+        ip = self._pins.get(name)
+        if ip is None:
+            raise httpx.ConnectError("host has no validated address")
+        extensions = dict(request.extensions)
+        extensions["pinned_ip"] = ip
+        if self._connect_by_ip:
+            extensions["sni_hostname"] = name
+            request = httpx.Request(
+                request.method,
+                request.url.copy_with(host=ip),
+                headers=request.headers,
+                stream=request.stream,
+                extensions=extensions,
+            )
+        else:
+            request.extensions = extensions
+        return self._inner.handle_request(request)
+
+    def close(self) -> None:
+        self._inner.close()
+
+
 class Fetcher:
     def __init__(
         self,
@@ -145,11 +200,14 @@ class Fetcher:
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
+        self._pins: dict[str, str] = {}
+        inner = transport or httpx.HTTPTransport(retries=0, trust_env=False)
         self._client = httpx.Client(
-            transport=transport,
+            transport=PinnedTransport(inner, self._pins, connect_by_ip=transport is None),
             timeout=TIMEOUT,
             follow_redirects=False,
-            headers={"User-Agent": user_agent(contact_email)},
+            trust_env=False,
+            headers={"User-Agent": user_agent(contact_email), "Accept-Encoding": "identity"},
         )
         self._resolve = resolve
         self._monotonic = monotonic
@@ -216,13 +274,13 @@ class Fetcher:
         raise FetchError("too_many_redirects", current)
 
     def _check_target(self, url: str) -> None:
-        parts = urlsplit(url)
         try:
-            port = parts.port
-        except ValueError:
-            port = -1
-        host = (parts.hostname or "").lower()
-        if parts.scheme not in ("http", "https") or not host or parts.username or parts.password:
+            parsed = httpx.URL(url)
+            port = parsed.port
+        except (httpx.InvalidURL, UnicodeError):
+            raise AddressRefused("bad_url", url) from None
+        host = host_key(url)
+        if parsed.scheme not in ("http", "https") or not host or parsed.userinfo:
             raise AddressRefused("bad_url", url)
         if port is not None and port not in ALLOWED_PORTS:
             raise AddressRefused("bad_port", url)
@@ -230,12 +288,15 @@ class Fetcher:
             raise HostBlocked("host_blocked", url)
         if host in self._over_budget:
             raise BudgetExceeded("crawl_delay_exceeds_budget", url)
+        if host in self._pins:
+            return
         try:
             addresses = self._resolve(host)
-        except OSError:
+        except (OSError, UnicodeError):
             addresses = []
         if not addresses or not all(_public(a) for a in addresses):
             raise AddressRefused("non_public_address", url)
+        self._pins[host] = addresses[0]
 
     def _check_robots(self, url: str) -> None:
         parts = urlsplit(url)
@@ -243,8 +304,7 @@ class Fetcher:
         rules = self._robots.get(origin)
         if rules is None:
             rules = self._robots[origin] = self._fetch_robots(origin)
-        parts_path = urlsplit(url)
-        target = parts_path.path + (f"?{parts_path.query}" if parts_path.query else "")
+        target = parts.path + (f"?{parts.query}" if parts.query else "")
         if rules.rules is None or not rules.rules.allows(target):
             raise RobotsDisallowed("robots_disallowed", url)
 
@@ -259,7 +319,7 @@ class Fetcher:
             else:
                 rules = ALLOW_ALL
             if rules.crawl_delay is not None:
-                host = (urlsplit(origin).hostname or "").lower()
+                host = host_key(origin)
                 if self._would_pass_deadline(rules.crawl_delay):
                     self._over_budget.add(host)
                     raise BudgetExceeded("crawl_delay_exceeds_budget", origin)
@@ -273,7 +333,7 @@ class Fetcher:
             if outcome.reason == "budget":
                 raise BudgetExceeded("budget", url)
             if outcome.block:
-                self._blocked.add((urlsplit(url).hostname or "").lower())
+                self._blocked.add(host_key(url))
                 raise HostBlocked(outcome.reason, url, outcome.status)
             raise FetchError(outcome.reason, url, outcome.status)
         return outcome
@@ -304,7 +364,7 @@ class Fetcher:
         raise AssertionError("unreachable")
 
     def _space(self, url: str) -> None:
-        host = (urlsplit(url).hostname or "").lower()
+        host = host_key(url)
         gap = max(MIN_HOST_GAP_S, self._crawl_delay.get(host, 0.0))
         last = self._last_start.get(host)
         if last is not None:
@@ -342,9 +402,13 @@ class Fetcher:
             started = self._monotonic()
             response = self._client.send(request, stream=True)
             try:
+                encoding = response.headers.get("content-encoding", "identity").strip().lower()
+                if encoding not in ("", "identity"):
+                    failure = "bad_encoding"
                 chunks: list[bytes] = []
                 size = 0
-                for chunk in response.iter_bytes():
+                # Only identity bodies get here, so decoded and raw sizes are the same.
+                for chunk in response.iter_bytes() if failure is None else ():
                     size += len(chunk)
                     if size > MAX_BYTES:
                         failure = "too_large"
@@ -363,6 +427,7 @@ class Fetcher:
             failure = "network_error"
         except (httpx.InvalidURL, httpx.StreamError):
             failure = "bad_request"
+        # Raised as a value, not inside the except blocks above, so no httpx error is chained.
         if reply is None:
             return failure or "network_error"
         return reply

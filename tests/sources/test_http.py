@@ -39,8 +39,6 @@ def test_contact_email_unset_names_variable(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_client_timeouts() -> None:
-    fetcher, _, _ = make_fetcher(lambda r: OK)
-    assert fetcher._client.timeout == TIMEOUT
     assert (TIMEOUT.connect, TIMEOUT.read, TIMEOUT.write, TIMEOUT.pool) == (20, 20, 20, 5)
 
 

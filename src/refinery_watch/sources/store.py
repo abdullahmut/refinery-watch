@@ -141,6 +141,7 @@ def flag_thin_page(conn: Conn, raw_document_id: int, url: str, body_chars: int, 
 
 RunStatus = Literal["ok", "failed", "skipped"]
 INTERVAL_FACTOR: Final = 0.9
+RUN_BUDGET: Final = timedelta(minutes=20)
 NOTE_MAX_CHARS: Final = 1000
 CLEAR_STATUSES: Final = frozenset({"open", "api_key_required"})
 CLEAR_PREFIX: Final = "allowed"

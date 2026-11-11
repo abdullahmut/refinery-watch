@@ -53,6 +53,30 @@ def load_tf() -> dict[str, list[Any]]:
     return merged
 
 
+def expand_dynamic(body: dict[str, Any]) -> dict[str, Any]:
+    """Turns `dynamic "outbound_rule"` over local.role_egress into plain outbound_rule entries."""
+    dynamic = body.pop("dynamic", [])
+    for block in dynamic:
+        for kind, spec in block.items():
+            assert kind == "outbound_rule"
+            assert spec["for_each"] == "local.role_egress"
+            (content,) = spec["content"]
+            assert content == {
+                "protocol": "outbound_rule.value.protocol",
+                "port_range": "outbound_rule.value.port_range",
+                "destination_addresses": "outbound_rule.value.destination_addresses",
+            }
+            internet = local_values()["internet"]
+            rules = []
+            for rule in local_values()["role_egress"]:
+                rule = dict(rule)
+                if rule["destination_addresses"] == "local.internet":
+                    rule["destination_addresses"] = internet
+                rules.append(rule)
+            body.setdefault("outbound_rule", []).extend(rules)
+    return body
+
+
 def resources(kind: str) -> dict[str, dict[str, Any]]:
     """Resources of one type, keyed by name, with values unwrapped."""
     found: dict[str, dict[str, Any]] = {}
@@ -60,7 +84,7 @@ def resources(kind: str) -> dict[str, dict[str, Any]]:
         for res_type, named in block.items():
             if unwrap(res_type) == kind:
                 for name, body in named.items():
-                    found[unwrap(name)] = unwrap(body)
+                    found[unwrap(name)] = expand_dynamic(unwrap(body))
     return found
 
 

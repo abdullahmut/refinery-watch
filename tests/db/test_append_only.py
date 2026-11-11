@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import psycopg
 import pytest
-from tests.db.helpers import add_document, add_source, insert_outage, ts
+from tests.db.helpers import add_document, add_source, insert_raw_outage, ts
 
 from refinery_watch.db.connect import Conn
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.integration
 
 def written_event(conn: Conn, n: int = 1) -> tuple[int, int]:
     """One outage with its primary source. Returns (outage id, source id)."""
-    event = insert_outage(conn, known_at=ts(n))
+    event = insert_raw_outage(conn, known_at=ts(n))
     return event, add_source(conn, event, add_document(conn, n))
 
 
@@ -61,14 +61,14 @@ def test_owner_is_stopped_by_trigger(db: Conn, statement: str) -> None:
 
 def test_row_without_primary_source_fails_when_checked(db: Conn) -> None:
     with pytest.raises(psycopg.Error) as info, db.transaction():
-        insert_outage(db)
+        insert_raw_outage(db)
         db.execute("SET CONSTRAINTS ALL IMMEDIATE")
     assert sqlstate(info) == "RW012"
 
 
 def test_corroboration_alone_is_not_a_primary_source(db: Conn) -> None:
     with pytest.raises(psycopg.Error) as info, db.transaction():
-        event = insert_outage(db)
+        event = insert_raw_outage(db)
         add_source(db, event, add_document(db), role="corroboration")
         db.execute("SET CONSTRAINTS ALL IMMEDIATE")
     assert sqlstate(info) == "RW012"
@@ -87,7 +87,7 @@ def test_same_document_twice_is_refused(db: Conn) -> None:
 
 
 def test_source_known_at_before_its_event_fails(db: Conn) -> None:
-    event = insert_outage(db, known_at=ts(5))
+    event = insert_raw_outage(db, known_at=ts(5))
     with pytest.raises(psycopg.Error) as info, db.transaction():
         add_source(db, event, add_document(db), known_at=ts(4))
     assert sqlstate(info) == "RW002"
@@ -106,9 +106,9 @@ def test_source_known_at_defaults_to_clock(db: Conn) -> None:
 def test_chain_and_supersedes_checks(db: Conn) -> None:
     event, _ = written_event(db)
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
-        insert_outage(db, supersedes=event)
+        insert_raw_outage(db, supersedes=event)
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
-        insert_outage(db, event_type="restart")
+        insert_raw_outage(db, event_type="restart")
 
 
 @pytest.mark.parametrize(
@@ -126,7 +126,7 @@ def test_chain_and_supersedes_checks(db: Conn) -> None:
 )
 def test_row_checks(db: Conn, bad: dict[str, object]) -> None:
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
-        insert_outage(db, **bad)
+        insert_raw_outage(db, **bad)
 
 
 def test_flag_combinations_that_are_allowed(db: Conn) -> None:
@@ -137,7 +137,7 @@ def test_flag_combinations_that_are_allowed(db: Conn) -> None:
         {"capacity_basis": "not_stated", "capacity_affected_kbd": None},
     ]
     for n, variant in enumerate(variants, start=1):
-        event = insert_outage(db, known_at=ts(n), **variant)
+        event = insert_raw_outage(db, known_at=ts(n), **variant)
         add_source(db, event, add_document(db, n))
 
 
@@ -147,7 +147,7 @@ def test_unit_must_belong_to_the_refinery(db: Conn) -> None:
     ).fetchone()
     assert other is not None
     with pytest.raises(psycopg.errors.ForeignKeyViolation), db.transaction():
-        insert_outage(db, refinery_unit_id=other["id"])
+        insert_raw_outage(db, refinery_unit_id=other["id"])
 
 
 def test_event_source_evidence_not_empty(db: Conn) -> None:

@@ -53,14 +53,15 @@ def outage_columns(conn: Conn, **over: Any) -> dict[str, Any]:
     return row
 
 
-def insert_outage(conn: Conn, **over: Any) -> int:
-    """Inserts one outage_event row as a root row of its own chain. Returns its id."""
+def insert_raw_outage(conn: Conn, **over: Any) -> int:
+    """Inserts one outage_event row with explicit id and chain_id. Returns its id."""
     row = outage_columns(conn, **over)
     new_id = conn.execute(
         "SELECT coalesce(max(id), 8999999) + 1 AS id FROM outage_event"
     ).fetchone()
     assert new_id is not None
-    row["id"] = row["chain_id"] = new_id["id"]
+    row["id"] = new_id["id"]
+    row.setdefault("chain_id", row["id"])
     cols = ", ".join(row)
     marks = ", ".join(f"%({k})s" for k in row)
     conn.execute(f"INSERT INTO outage_event ({cols}) OVERRIDING SYSTEM VALUE VALUES ({marks})", row)
@@ -82,3 +83,27 @@ def add_source(
     ).fetchone()
     assert row is not None
     return int(row["id"])
+
+
+def insert_raw_restart(conn: Conn, ends_event_id: int, **over: Any) -> int:
+    fields: dict[str, Any] = {
+        "event_type": "restart",
+        "ends_event_id": ends_event_id,
+        "capacity_basis": "not_stated",
+        "capacity_affected_kbd": None,
+    }
+    fields.update(over)
+    return insert_raw_outage(conn, **fields)
+
+
+def current_ids(conn: Conn, as_of: datetime) -> list[int]:
+    rows = conn.execute("SELECT id FROM outage_as_of(%s) ORDER BY id", (as_of,)).fetchall()
+    return [int(r["id"]) for r in rows]
+
+
+def sourced(conn: Conn, event_id: int) -> int:
+    """Gives a raw row its primary source, known when the row was. Returns the row id."""
+    known = conn.execute("SELECT known_at FROM outage_event WHERE id = %s", (event_id,)).fetchone()
+    assert known is not None
+    add_source(conn, event_id, add_document(conn, event_id), known_at=known["known_at"])
+    return event_id

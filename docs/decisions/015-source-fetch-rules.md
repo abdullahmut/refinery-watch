@@ -22,12 +22,17 @@ One fetcher on `httpx`, used by all three adapters. It sends
 `refinery-watch/0.1 (+mailto:<CONTACT_EMAIL>)`, with the email taken from config. Timeouts are
 20 seconds. On 429 or 5xx it retries up to 3 times. It waits for Retry-After when given, up to
 5 minutes. Otherwise it waits 30, 60, then 120 seconds. A 401, 403 or 451, or a host that still
-fails after the retries, gets no more requests in that run. robots.txt is read with
-`urllib.robotparser` through the same client and kept per host for one run. A robots.txt that
-returns 401, 403 or 5xx counts as a disallow. Requests to one host are at least 5 seconds apart,
-or longer if robots.txt sets a crawl delay. `source.fetch_interval_min` is the shortest gap between
+fails after the retries, gets no more requests in that run. robots.txt is fetched
+through the same client and read by our own small parser, written to RFC 9309: the longest matching
+rule wins, `*` and `$` work, and Allow wins a tie. The standard library's parser takes the first
+match and knows no wildcards, so it is not used. Rules are kept per site for one run. A robots.txt
+that cannot be fetched, or that returns anything other than 200, 404 or 410, counts as a disallow.
+Requests to one host are at least 5 seconds apart, or longer if robots.txt sets a crawl delay. A
+crawl delay over 60 seconds counts as a disallow. `source.fetch_interval_min` is the shortest gap between
 two runs of one source. It is not a gap between requests. The fetcher only connects to public
-addresses on ports 80 and 443, and it checks this on every redirect.
+addresses on ports 80 and 443, and it checks this on every redirect. Each host is looked up once per run, and every request to it, retries and redirects included,
+connects to an address from that one lookup, all of which were checked together, so a second DNS
+answer cannot send it inside the VPC. The fetcher resolves IPv4 only unless `FETCH_IPV6` is set.
 
 Feed XML is parsed with `defusedxml`. HTML becomes text with the standard library's
 `html.parser`. We do not use feedparser, BeautifulSoup, lxml or trafilatura.

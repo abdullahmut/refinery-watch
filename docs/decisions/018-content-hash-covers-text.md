@@ -12,7 +12,7 @@ session tokens and related-story boxes. One story also appears in two Hydrocarbo
 
 - Hash the raw bytes. Simple, but nearly every refetch is "new", so the same story reaches the
   model again and costs money.
-- Hash the extracted headline and body text after normalising it: Unicode NFC, runs of whitespace
+- Hash the page's own title and body text after normalising it: Unicode NFC, runs of whitespace
   collapsed, blank lines removed. The same story hashes the same way unless its words change.
 - Also skip any URL already stored, before fetching it.
 

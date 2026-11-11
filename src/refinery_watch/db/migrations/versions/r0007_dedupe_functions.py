@@ -34,6 +34,14 @@ STATEMENTS = [
           JOIN outage_event t ON t.id = r.ends_event_id
           WHERE r.event_type = 'restart' AND t.chain_id = c.chain_id
             AND r.start_date <= p_start_date)
+        AND NOT EXISTS (
+          SELECT 1 FROM outage_current_as_of(p_as_of) x
+          WHERE x.event_type = 'restart'
+            AND x.refinery_id = c.refinery_id
+            AND x.refinery_unit_id IS NOT DISTINCT FROM c.refinery_unit_id
+            AND x.whole_plant = c.whole_plant
+            AND x.start_date > least(c.start_date, p_start_date)
+            AND x.start_date <= greatest(c.start_date, p_start_date))
       ORDER BY 1
     $$
     """,

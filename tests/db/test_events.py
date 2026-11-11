@@ -380,3 +380,24 @@ def test_lock_timeout_is_restored_after_a_write(app_db: Conn) -> None:
     before = app_db.execute("SHOW lock_timeout").fetchone()
     must_write(app_db, new_row(app_db), 1)
     assert app_db.execute("SHOW lock_timeout").fetchone() == before
+
+
+def test_no_merge_across_another_chains_restart(app_db: Conn) -> None:
+    must_write(app_db, new_row(app_db), 1)
+    must_write(app_db, restart_row(app_db, known_at=ts(8), start_date=day(8)), 2)
+    e2 = must_write(app_db, new_row(app_db, known_at=ts(9), start_date=day(9)), 3)
+    result = write_event(
+        app_db, new_row(app_db, known_at=ts(10), start_date=day(6)), link(app_db, 4)
+    )
+    assert not (isinstance(result, Duplicate) and result.chain_id == e2.chain_id)
+
+
+def test_late_report_of_e1_is_not_ambiguous_with_a_retrip(app_db: Conn) -> None:
+    e1 = must_write(app_db, new_row(app_db), 1)
+    must_write(app_db, restart_row(app_db, known_at=ts(2), start_date=day(2)), 2)
+    must_write(app_db, new_row(app_db, known_at=ts(3), start_date=day(3)), 3)
+    result = write_event(
+        app_db, new_row(app_db, known_at=ts(5), start_date=day(1)), link(app_db, 4)
+    )
+    assert isinstance(result, Duplicate)
+    assert result.chain_id == e1.chain_id

@@ -17,7 +17,7 @@ from refinery_watch.sources.http import (
     RobotsDisallowed,
     strip_tracking,
 )
-from refinery_watch.sources.pages import fetch_page
+from refinery_watch.sources.pages import Tally, fetch_page
 from refinery_watch.sources.published import Published, parse_rfc822, plausible
 from refinery_watch.sources.store import (
     NewDocument,
@@ -104,37 +104,33 @@ def run(
         return RunOutcome("failed", 0, 0, f"{type(exc).__name__}: {exc}")
     if not items and not reasons:
         return RunOutcome("ok", 0, 0, "empty feed")
-    counts: dict[str, int] = {}
-
-    def count(name: str, n: int = 1) -> None:
-        counts[name] = counts.get(name, 0) + n
-
-    count("bad_item", len(reasons))
+    tally = Tally()
+    tally.add("bad_item", len(reasons))
     stored = 0
     feed_host = _host(feed_url)
     for item in items[:MAX_ARTICLES]:
         link = strip_tracking(item.link)
         if _host(link) != feed_host:
-            count("off_host")
+            tally.add("off_host")
             continue
         if url_known(conn, [link]):
-            count("known_url")
+            tally.add("known_url")
             continue
         if fetcher.monotonic() >= deadline:
-            count("deadline")
+            tally.add("deadline")
             break
         try:
             fetched = fetch_page(fetcher, link)
         except HostBlocked as exc:
             return RunOutcome("failed", len(items), stored, f"HostBlocked: {exc}")
         except RobotsDisallowed:
-            count("robots")
+            tally.add("robots")
             continue
         except FetchError:
-            count("fetch_error")
+            tally.add("fetch_error")
             continue
         if fetched is None:
-            count("not_html")
+            tally.add("not_html")
             continue
         page = fetched.page
         published = item.published
@@ -165,8 +161,5 @@ def run(
             if is_thin(page):
                 flag_thin_page(conn, result.raw_document_id, link, len(page.text), page.image_count)
         else:
-            count("known_hash")
-    notes = [f"{name}={n}" for name, n in counts.items() if n and name != "deadline"]
-    if counts.get("deadline"):
-        notes.append(f"deadline after {stored} documents")
-    return RunOutcome("ok", len(items), stored, "; ".join(notes) or None)
+            tally.add("known_hash")
+    return RunOutcome("ok", len(items), stored, tally.note(stored))

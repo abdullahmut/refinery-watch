@@ -1,0 +1,44 @@
+{
+  "articles": [
+    {
+      "url": "https://news.example.com/a?utm_source=wire",
+      "url_mobile": "https://m.news.example.com/a",
+      "title": "Testville refinery unit shut after fire",
+      "seendate": "20261110T143000Z",
+      "socialimage": "https://news.example.com/img/a.jpg",
+      "domain": "news.example.com",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://news.example.org/b",
+      "url_mobile": "",
+      "title": "Samplebay hydrocracker restart planned",
+      "seendate": "20261110T141500Z",
+      "socialimage": "",
+      "domain": "news.example.org",
+      "language": "English",
+      "sourcecountry": "Singapore"
+    },
+    {
+      "url": "https://news.example.com/c",
+      "url_mobile": "",
+      "title": "Old Harbour story seen again",
+      "seendate": "20261110T120000Z",
+      "socialimage": "",
+      "domain": "news.example.com",
+      "language": "English",
+      "sourcecountry": "Netherlands"
+    },
+    {
+      "url": "https://noticias.example.org/d",
+      "url_mobile": "",
+      "title": "Invented headline in another language",
+      "seendate": "20261110T110000Z",
+      "socialimage": "",
+      "domain": "noticias.example.org",
+      "language": "Spanish",
+      "sourcecountry": "Mexico"
+    }
+  ]
+}

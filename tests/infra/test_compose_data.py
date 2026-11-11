@@ -87,6 +87,11 @@ LOGGING: Final[dict[str, Any]] = {
 HEALTH_KEYS: Final[frozenset[str]] = frozenset(
     {"test", "interval", "timeout", "retries", "start_period"}
 )
+HEALTH_COMMAND: Final[str] = (
+    "gosu postgres psql -h /var/run/postgresql -U postgres -d postgres -tAc "
+    "\"select 1 from pg_roles where rolname='refinery_app' "
+    "and current_setting('listen_addresses') <> ''\" | grep -q 1"
+)
 VAR_PATTERN: Final[re.Pattern[str]] = re.compile(r"\$\{([A-Za-z_]+)([^}]*)\}")
 BARE_DOLLAR: Final[re.Pattern[str]] = re.compile(r"\$(?!\{)")
 
@@ -216,8 +221,7 @@ def test_memory_limits(stack: str) -> None:
 def test_healthchecks(stack: str) -> None:
     check = merged(stack)["postgres"]["healthcheck"]
     assert set(check) == HEALTH_KEYS
-    assert check["test"][:2] == ["CMD", "pg_isready"]
-    assert check["test"][check["test"].index("-h") + 1] == "127.0.0.1"
+    assert check["test"] == ["CMD-SHELL", HEALTH_COMMAND]
     assert check["start_period"] == "60s"
 
 

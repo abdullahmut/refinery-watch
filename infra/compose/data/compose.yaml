@@ -56,7 +56,12 @@ services:
       - -c
       - hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres", "-d", "postgres"]
+      test:
+        - CMD-SHELL
+        - >-
+          gosu postgres psql -h /var/run/postgresql -U postgres -d postgres -tAc
+          "select 1 from pg_roles where rolname='refinery_app'
+          and current_setting('listen_addresses') <> ''" | grep -q 1
       interval: 10s
       timeout: 5s
       retries: 6

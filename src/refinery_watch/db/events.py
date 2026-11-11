@@ -109,7 +109,7 @@ class Duplicate:
 
     chain_id: int
     corroborated_event_id: int
-    corroboration_added: bool = True
+    corroboration_added: bool
 
 
 @dataclass(frozen=True, slots=True)

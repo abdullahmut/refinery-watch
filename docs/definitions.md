@@ -124,8 +124,8 @@ row until the revision was known. The note shows "revised: restart 20 Nov, was 1
 - A new row may supersede only a row that is current when the new row is written. A second row
   that supersedes the same row goes to review. Each chain is then a single line with at most one
   current row at any T. This keeps the as-of rule as written: one event never shows two current
-  rows, and its capacity is never counted twice. The database can hold this with a unique
-  constraint on `supersedes`.
+  rows, and its capacity is never counted twice. The database holds this with a unique
+  constraint on `supersedes` (decision record 005).
 
 ## Confidence
 

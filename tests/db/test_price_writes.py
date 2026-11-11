@@ -75,3 +75,15 @@ def test_no_update_or_delete_statements_in_the_adapter_code() -> None:
             assert "INTO OUTAGE_EVENT" not in text, path
             if "UPDATE " in text and "SET" in text:
                 assert "JOB_RUN" in text, (path, line)
+
+
+def test_same_value_after_a_revision_inserts_nothing(app: Conn) -> None:
+    day = date(2026, 11, 6)
+
+    def rows(value: str) -> list[PriceRow]:
+        return [PriceRow("eia.test1", day, Decimal(value), "percent")]
+
+    assert write_prices(app, rows("90.1"), "eia_wpsr", None) == 1
+    assert write_prices(app, rows("90.4"), "eia_wpsr", None) == 1
+    assert write_prices(app, rows("90.4"), "eia_wpsr", None) == 0
+    assert write_prices(app, rows("90.1"), "eia_wpsr", None) == 1

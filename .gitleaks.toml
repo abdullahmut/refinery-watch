@@ -1,0 +1,4 @@
+title = "refinery-watch gitleaks config"
+
+[extend]
+useDefault = true

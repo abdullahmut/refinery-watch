@@ -3,8 +3,8 @@ import sys
 
 import pytest
 
-from refinery_watch.extract.keywords import EVENT_TERMS, match_form
-from refinery_watch.extract.matching import RefineryRef
+from refinery_watch.extract.keywords import EVENT_TERMS
+from refinery_watch.extract.matching import RefineryRef, match_form
 from refinery_watch.extract.prefilter import build_term_matcher
 
 

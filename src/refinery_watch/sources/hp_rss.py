@@ -24,12 +24,12 @@ from refinery_watch.sources.store import (
     NewDocument,
     RunOutcome,
     Stored,
-    TermMatcher,
     flag_thin_page,
     store_document,
     url_known,
 )
 from refinery_watch.sources.text import content_sha256, is_thin
+from refinery_watch.terms import TermMatcher
 
 HpSource = Literal["hp_news", "hp_refining"]
 MAX_ARTICLES: Final = 50

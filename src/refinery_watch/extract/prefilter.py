@@ -1,11 +1,10 @@
 """Keyword pre-filter. A text passes when it has an event word and names a refinery."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
-from refinery_watch.extract.keywords import EVENT_TERMS, match_form
-from refinery_watch.extract.matching import RefineryMatcher, RefineryRef
-
-TermMatcher = Callable[[str], Sequence[str]]
+from refinery_watch.extract.keywords import EVENT_TERMS
+from refinery_watch.extract.matching import RefineryMatcher, RefineryRef, match_form
+from refinery_watch.terms import TermMatcher
 
 
 def build_term_matcher(refineries: Sequence[RefineryRef]) -> TermMatcher:

@@ -17,7 +17,8 @@ from tests.sources.helpers import (
 from refinery_watch.db.connect import Conn
 from refinery_watch.sources.hp_rss import run
 from refinery_watch.sources.http import Fetcher
-from refinery_watch.sources.store import RunOutcome, TermMatcher, finish_run
+from refinery_watch.sources.store import RunOutcome, finish_run
+from refinery_watch.terms import TermMatcher
 
 pytestmark = pytest.mark.integration
 

@@ -15,8 +15,6 @@ from refinery_watch.objects import RawStore
 from refinery_watch.sources.clean import clean_text
 from refinery_watch.sources.published import Published
 
-TermMatcher = Callable[[str], Sequence[str]]
-
 DUPLICATE_CONSTRAINTS: Final = ("content_sha256", "object_key")
 
 

@@ -2,10 +2,6 @@
 
 from typing import Final
 
-from refinery_watch.extract.matching import match_form
-
-__all__ = ["EVENT_TERMS", "match_form"]
-
 EVENT_TERMS: Final[tuple[str, ...]] = (
     "shut",
     "shuts",

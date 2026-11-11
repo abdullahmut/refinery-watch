@@ -208,3 +208,14 @@ def test_every_role_has_cloud_init() -> None:
     roles = set(local_values()["roles"])
     templates = {p.name.removesuffix(".yaml.tftpl") for p in CLOUD_INIT_DIR.glob("*.yaml.tftpl")}
     assert roles == templates
+
+
+def test_lock_file_matches_pinned_version() -> None:
+    terraform = unwrap(load_tf()["terraform"][0])
+    pinned = terraform["required_providers"][0]["digitalocean"]["version"].removeprefix("=").strip()
+    lock = hcl2.loads((TF_DIR / ".terraform.lock.hcl").read_text(encoding="utf-8"))
+    (provider,) = lock["provider"]
+    ((name, body),) = provider.items()
+    assert unwrap(name) == "registry.terraform.io/digitalocean/digitalocean"
+    assert unwrap(body["version"]) == pinned
+    assert any(unwrap(h).startswith("h1:") for h in body["hashes"])

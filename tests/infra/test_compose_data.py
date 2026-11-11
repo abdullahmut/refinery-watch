@@ -32,6 +32,19 @@ PG_SETTINGS: Final[dict[str, str]] = {
 POSTGRES_IMAGE: Final[str] = (
     "postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9"
 )
+ROLES_SQL: Final[list[str]] = [
+    "SET log_min_error_statement TO panic;",
+    "\\set VERBOSITY terse",
+    "\\getenv owner_pw PG_OWNER_PASSWORD",
+    "\\getenv app_pw PG_APP_PASSWORD",
+    "CREATE ROLE refinery_owner LOGIN PASSWORD :'owner_pw' CONNECTION LIMIT 3;",
+    "CREATE ROLE refinery_app LOGIN PASSWORD :'app_pw' CONNECTION LIMIT 8;",
+    "CREATE DATABASE refinery_watch OWNER refinery_owner;",
+    "REVOKE ALL ON DATABASE refinery_watch FROM PUBLIC;",
+    "GRANT CONNECT ON DATABASE refinery_watch TO refinery_app;",
+    "REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;",
+    "REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;",
+]
 BACKEND_OVERHEAD_MIB: Final[int] = 6
 TOTAL_LIMIT_MIB: Final[int] = 704
 LOGGING: Final[dict[str, Any]] = {
@@ -219,16 +232,16 @@ def test_pg_hba_rejects_remote_superuser() -> None:
 
 def test_roles_script() -> None:
     text = (COMPOSE_DIR / "postgres" / "initdb" / "10-roles.sh").read_text(encoding="utf-8")
-    assert "set -euo pipefail" in text
-    assert "ON_ERROR_STOP=1" in text
-    assert re.findall(r"CREATE ROLE (\w+)", text) == ["refinery_owner", "refinery_app"]
-    assert "CREATE DATABASE refinery_watch OWNER refinery_owner;" in text
-    assert "PASSWORD :'owner_pw'" in text
-    assert "PASSWORD :'app_pw'" in text
-    assert "<<'SQL'" in text
-    for word in ("SUPERUSER", "CREATEROLE", "CREATEDB", "BYPASSRLS"):
-        assert word not in text
-    assert not re.search(r"GRANT .* ON (ALL )?(TABLE|TABLES|SEQUENCES|SCHEMA)", text)
+    lines = text.splitlines()
+    assert lines[0] == "#!/usr/bin/env bash"
+    assert "set -euo pipefail" in lines
+    assert not [line for line in lines if re.match(r"\s*set .*-[a-z]*[xv]", line)]
+    command = next(line for line in lines if line.startswith("psql "))
+    assert "_pw" not in command and "PASSWORD" not in command
+    assert "--username postgres" in command
+    body = text.split("<<'SQL'\n", 1)[1].split("\nSQL", 1)[0].splitlines()
+    assert body == ROLES_SQL
+    assert not re.search(r"PASSWORD\s+'", text)
 
 
 def test_vpc_ports_need_bind_address() -> None:

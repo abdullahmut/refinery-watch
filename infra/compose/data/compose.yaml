@@ -8,7 +8,7 @@ x-logging: &logging
 
 services:
   postgres:
-    image: postgres:16.15-bookworm
+    image: postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9
     restart: always
     mem_limit: 384m
     memswap_limit: 384m

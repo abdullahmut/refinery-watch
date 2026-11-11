@@ -29,6 +29,9 @@ PG_SETTINGS: Final[dict[str, str]] = {
     "log_timezone": "UTC",
     "hba_file": "/etc/postgresql/pg_hba.conf",
 }
+POSTGRES_IMAGE: Final[str] = (
+    "postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9"
+)
 BACKEND_OVERHEAD_MIB: Final[int] = 6
 TOTAL_LIMIT_MIB: Final[int] = 704
 LOGGING: Final[dict[str, Any]] = {
@@ -285,3 +288,9 @@ def test_make_up_and_down() -> None:
     assert "compose.vpc.yaml" not in makefile
     assert "down" in makefile.split(".PHONY:")[1].splitlines()[0].split()
     assert "$(shell" not in makefile
+
+
+def test_images_pinned_by_digest() -> None:
+    for name, service in services("compose.yaml").items():
+        assert re.search(r"@sha256:[0-9a-f]{64}$", service["image"]), name
+    assert services("compose.yaml")["postgres"]["image"] == POSTGRES_IMAGE

@@ -7,7 +7,11 @@ name = "refinery-watch"
 version = "0.1.0"
 description = "Refinery outage tracker."
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "alembic>=1.20.1",
+    "psycopg[binary]>=3.3.8",
+    "sqlalchemy>=2.1.8",
+]
 classifiers = ["Private :: Do Not Upload"]
 
 [tool.uv]
@@ -32,6 +36,7 @@ minversion = "8.0"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
+markers = ["integration: needs Postgres on 127.0.0.1"]
 filterwarnings = ["error"]
 
 [tool.coverage.run]

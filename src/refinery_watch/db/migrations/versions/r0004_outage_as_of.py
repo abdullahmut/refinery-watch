@@ -17,15 +17,20 @@ FUNCTIONS = (
 STATEMENTS = [
     """
     CREATE FUNCTION outage_cutoff() RETURNS timestamptz LANGUAGE plpgsql AS $$
+    DECLARE
+      cutoff timestamptz;
     BEGIN
-      PERFORM pg_advisory_xact_lock(7746001);
-      RETURN clock_timestamp();
+      PERFORM pg_advisory_lock(7746001);
+      cutoff := clock_timestamp();
+      PERFORM pg_advisory_unlock(7746001);
+      RETURN cutoff;
     END
     $$
     """,
     """
     COMMENT ON FUNCTION outage_cutoff() IS
-      'Waits for writers to commit, then returns the clock. Call it in autocommit.'
+      'Waits for writers to commit, then returns the clock.'
+      ' The lock is released at once, so it is safe inside a transaction.'
     """,
     """
     CREATE FUNCTION outage_current_as_of(as_of timestamptz)
@@ -81,6 +86,7 @@ def upgrade() -> None:
         op.execute(statement)
     for statement in pin_search_path(*PINNED):
         op.execute(statement)
+    op.execute("ALTER FUNCTION outage_cutoff() SET lock_timeout = '5s'")
     op.execute(f"REVOKE EXECUTE ON FUNCTION {FUNCTIONS} FROM PUBLIC")
     op.execute(grant("EXECUTE", f"FUNCTION {FUNCTIONS}"))
 

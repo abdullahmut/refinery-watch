@@ -1,14 +1,26 @@
 """Every function pins its search_path, so a temp table cannot shadow a real one."""
 
+import importlib
 from collections.abc import Iterator
+from urllib.parse import urlparse
 
 import psycopg
+import psycopg.sql
 import pytest
 from tests.db.helpers import add_document, open_in_schema, unit_id
 
 from refinery_watch.db.connect import Conn
 
 pytestmark = pytest.mark.integration
+
+VERSIONS = "refinery_watch.db.migrations.versions"
+MIGRATIONS = (
+    "r0003_outage_event_tables",
+    "r0004_outage_as_of",
+    "r0005_insert_rules",
+    "r0007_dedupe_functions",
+    "r0008_note_price_tceq",
+)
 
 INSERT = (
     "INSERT INTO {s}.outage_event (event_type, refinery_id, refinery_unit_id, capacity_basis,"
@@ -21,27 +33,38 @@ SOURCE = (
 )
 
 
+def pinned_signatures() -> set[str]:
+    """Every signature the migrations pin, so a new function without a pin fails the count."""
+    found: set[str] = set()
+    for module in MIGRATIONS:
+        found.update(importlib.import_module(f"{VERSIONS}.{module}").PINNED)
+    return found
+
+
 def test_every_function_pins_search_path_with_pg_temp_last(db: Conn, session_schema: str) -> None:
     rows = db.execute(
         "SELECT p.proname, p.proconfig FROM pg_proc p WHERE p.pronamespace = %s::regnamespace"
         " AND p.prokind = 'f'",
         (session_schema,),
     ).fetchall()
-    assert len(rows) == 11
+    assert len(rows) == len(pinned_signatures())
     expected = f"search_path=pg_catalog, {session_schema}, pg_temp"
     for row in rows:
-        assert row["proconfig"] == [expected], row["proname"]
+        assert expected in row["proconfig"], row["proname"]
 
 
 @pytest.fixture
 def temp_granted(pg_server: str, app_url: str) -> Iterator[None]:
-    role = psycopg.conninfo.conninfo_to_dict(app_url)["user"]
+    role = psycopg.sql.Identifier(urlparse(app_url).username or "")
+    database = psycopg.sql.Identifier(urlparse(pg_server).path.lstrip("/"))
+    grant = psycopg.sql.SQL("GRANT TEMPORARY ON DATABASE {} TO {}").format(database, role)
+    revoke = psycopg.sql.SQL("REVOKE TEMPORARY ON DATABASE {} FROM {}").format(database, role)
     with psycopg.connect(pg_server, autocommit=True) as owner:
-        owner.execute(f"GRANT TEMPORARY ON DATABASE refinery_watch_test TO {role}")
+        owner.execute(grant)
         try:
             yield
         finally:
-            owner.execute(f"REVOKE TEMPORARY ON DATABASE refinery_watch_test FROM {role}")
+            owner.execute(revoke)
 
 
 def test_temp_table_cannot_shadow_outage_event(

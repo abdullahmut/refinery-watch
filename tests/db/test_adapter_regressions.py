@@ -301,3 +301,64 @@ def test_url_known_ignores_the_scheme(app: Conn) -> None:
     assert url_known(app, ["http://news.example.com/a"])
     assert url_known(app, ["https://news.example.com/a"])
     assert not url_known(app, ["http://news.example.com/zzz"])
+
+
+def test_a_block_on_the_api_host_during_a_lead_fails_the_run(app: Conn) -> None:
+    feed = json.dumps(
+        {
+            "articles": [
+                {
+                    "url": "https://gdelt.example.com/story",
+                    "title": "t",
+                    "seendate": "20261110T143000Z",
+                    "language": "English",
+                }
+            ]
+        }
+    ).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v2/doc/doc":
+            return httpx.Response(200, content=feed)
+        return httpx.Response(403)
+
+    fetcher, _, _ = make_fetcher(handler)
+    outcome = gdelt_doc.run(
+        app,
+        fetcher,
+        FakeStore(),
+        shut_matcher,
+        new_run(app, "fetch_gdelt_doc"),
+        "https://gdelt.example.com/api/v2/doc/doc",
+        60,
+        float("inf"),
+    )
+    assert outcome.status == "failed"
+
+
+def test_a_lead_that_redirects_into_a_blocked_api_host_fails_the_run(app: Conn) -> None:
+    feed = lead_list("moved")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v2/doc/doc" and request.url.host == "gdelt.example.com":
+            if request.headers.get("x-blocked"):
+                return httpx.Response(403)
+            return httpx.Response(200, content=feed)
+        if request.url.host == "news.example.com":
+            return httpx.Response(302, headers={"location": "https://gdelt.example.com/blocked"})
+        return httpx.Response(403)
+
+    fetcher, _, _ = make_fetcher(handler)
+    outcome = gdelt_doc.run(
+        app,
+        fetcher,
+        FakeStore(),
+        shut_matcher,
+        new_run(app, "fetch_gdelt_doc"),
+        "https://gdelt.example.com/api/v2/doc/doc",
+        60,
+        float("inf"),
+    )
+    assert outcome.status == "failed"
+    assert outcome.note is not None
+    assert outcome.note.startswith("HostBlocked")

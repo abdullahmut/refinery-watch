@@ -203,3 +203,8 @@ def test_bad_host_error_is_not_chained() -> None:
         fetcher.get("https://www..example.com/story")
     assert info.value.__cause__ is None
     assert info.value.__context__ is None
+
+
+def test_ipv4_mapped_addresses_are_judged_as_their_ipv4_address() -> None:
+    assert _public("::ffff:8.8.8.8")
+    assert not _public("::ffff:127.0.0.1")

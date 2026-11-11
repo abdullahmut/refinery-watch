@@ -106,3 +106,11 @@ def test_build_params() -> None:
     assert ("length", "200") in params
     facets = [v for k, v in params if k == "facets[series][]"]
     assert facets == list(SERIES)
+
+
+def test_boolean_values_are_skipped_not_read_as_numbers() -> None:
+    body = (
+        b'{"response": {"data": [{"period": "2026-11-06", "series": "TESTSERIES1",'
+        b' "value": true}, {"period": "2026-11-06", "series": "TESTSERIES2", "value": 5}]}}'
+    )
+    assert [r.series for r in parse_data(body)] == ["eia.testseries2"]

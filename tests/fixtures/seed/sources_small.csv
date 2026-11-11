@@ -1,0 +1,4 @@
+source_id,name,tier,region_focus,access_method,feed_url,article_url_pattern,robots_status,fetch_interval_min,notes,verified
+test_wire,Test Wire,2,Global,rss,https://wire.example.test/rss,https://wire.example.test/news/YYYY/slug/,open,120,"Invented source, rss.",no
+test_press,Test Press,3,US Gulf,html,https://press.example.test/latest,https://press.example.test/<id>,unchecked,360,,no
+test_agency,Test Agency,1,Europe,api,https://api.example.test/v1,https://api.example.test/v1/<id>,api_key_required,1440,"Invented, n/a for robots.",yes

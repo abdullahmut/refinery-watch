@@ -147,3 +147,12 @@ def privileges(db: Conn, app_url: str) -> Callable[[str], set[str]]:
         return out
 
     return held
+
+
+@pytest.fixture
+def fresh_db(fresh_schema: str, pg_server: str) -> Iterator[Conn]:
+    """Owner connection to a migrated, empty schema. Nothing is seeded."""
+    conn = open_in_schema(pg_server, fresh_schema)
+    yield conn
+    conn.rollback()
+    conn.close()

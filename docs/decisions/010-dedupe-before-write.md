@@ -36,7 +36,9 @@ The third. Two SQL functions do the lookup at write time.
 
 "Kept" means: if the new report has the higher confidence, it is written as a revision of the
 current row, with its own event type. "Linked" means an `event_source` row with role
-`corroboration`. Old rows are never touched.
+`corroboration`. Old rows are never touched. Amended 2026-11-11: the database write path never
+writes the kept report itself; it returns the matching chain, and the extraction pipeline writes
+the higher-confidence report as an ordinary revision of that chain's current row.
 
 ## Consequences
 

@@ -34,3 +34,6 @@ No unit is closed on a source that did not name it. Some whole-plant restarts wa
 round-up that lists the units coming back still produces one restart per unit through extraction.
 To move to "close everything", add an append-only link table from a restart to the events it ends
 and read it in `outage_as_of`. Rows already written stay valid.
+
+Amended 2026-11-11: a restart with no named unit and no whole-plant flag ends only an unnamed-unit
+outage, and a whole-plant restart ends only a whole-plant outage. The two share one open slot.

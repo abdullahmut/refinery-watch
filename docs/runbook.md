@@ -208,3 +208,100 @@ above, on a box that holds no data.
 
 Verify: from the laptop, `ssh -p <ssh_port> deploy@<public ip>` logs in, and
 `nc -vz -w 5 <public ip> 22` times out.
+
+## Start Postgres on the data VM
+
+Symptom: the data Droplet is new, or Postgres is not running and nothing has started it.
+
+Likely cause: first setup. Nothing starts the stack by itself the first time.
+
+Put `.env` in `/opt/refinery-watch`, owned by `deploy`, mode `0600`. Set `POSTGRES_PASSWORD`,
+`PG_OWNER_PASSWORD` and `PG_APP_PASSWORD` to fresh values from `openssl rand -hex 24`. Set
+`DATA_BIND_ADDR` to `private_ipv4["data"]` from `terraform output private_ipv4`. Then, on the
+Droplet:
+
+```
+cd /opt/refinery-watch
+stat -c '%U %a' .env
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml up -d --wait
+```
+
+`stat` must print `deploy 600`. If `DATA_BIND_ADDR` is empty, Compose stops and says to set it.
+
+Verify:
+
+```
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml ps
+ss -ltn | grep 5432
+docker stats --no-stream
+free -m
+```
+
+- `ps` shows `postgres` as `healthy`.
+- `ss` shows 5432 on the private address only, never `0.0.0.0` or `*`.
+- `docker stats` shows memory under the 384 MiB limit.
+- Write down the `available` column of `free -m`. It must be at least 500 MB.
+
+## Postgres down after a reboot
+
+Symptom: after a reboot, `docker ps` does not list `postgres`, or `ps` shows it exited.
+
+Likely cause: Docker started before the private address was up, so the port bind failed. The
+restart policy does not retry a failed bind.
+
+Fix, on the Droplet:
+
+```
+cd /opt/refinery-watch
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml up -d --wait
+```
+
+Verify as in the entry above: `postgres` is `healthy` and `ss -ltn | grep 5432` shows the private
+address. If `up` still fails on the bind, check `ip -4 addr show eth1` for the private address and
+compare it with `DATA_BIND_ADDR`.
+
+## Rotate a database password
+
+Symptom: a password leaked or must change. The init script does not run again, so editing `.env`
+alone changes nothing inside Postgres.
+
+Likely cause: roles are created once, on an empty data volume.
+
+Edit `.env` first. Then set the new password in Postgres. This reads the value from `.env` on the
+Droplet and never prints it. Example for the app role:
+
+```
+cd /opt/refinery-watch
+set -a; . ./.env; set +a
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -u postgres postgres psql -v pw="$PG_APP_PASSWORD" -c "ALTER ROLE refinery_app PASSWORD :'pw'"
+```
+
+Use `refinery_owner` and `PG_OWNER_PASSWORD` for the owner role. Then restart every service that
+connects as that role, so it reads the new value.
+
+Verify: connect with the new password from the app Droplet, and confirm the old one is refused:
+
+```
+PGPASSWORD=<new> psql -h <data private ip> -U refinery_app -d refinery_watch -c 'select 1'
+```
+
+## Reset the laptop database
+
+Symptom: the laptop database needs a clean start, or the test roles are missing because the volume
+was created before `20-test-roles.sql` existed. Init scripts run only on an empty volume.
+
+Likely cause: the volume `refinery-watch-data_pgdata` already holds an older cluster.
+
+Laptop only. Never on the Droplet: this deletes all data.
+
+```
+make down
+docker volume rm refinery-watch-data_pgdata
+make up
+```
+
+Verify:
+
+```
+psql "postgresql://refinery_test_owner:refinery_test_owner@127.0.0.1:5432/refinery_watch_test" -c "select 1"
+```

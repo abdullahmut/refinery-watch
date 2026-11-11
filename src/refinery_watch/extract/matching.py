@@ -87,6 +87,7 @@ class RefineryMatcher:
         return hits[:limit]
 
     def find_name(self, name: str) -> list[RefineryHit]:
+        """Matches a short name the model reported, to suggest a refinery id for review."""
         return self.find(name)
 
     @staticmethod

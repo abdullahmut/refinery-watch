@@ -3,8 +3,13 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from refinery_watch.sources.http import Fetcher, FetchResult
+from refinery_watch.sources.http import Fetcher, FetchResult, host_key
 from refinery_watch.sources.text import PageText, decode_html, page_text
+
+
+def host_of(url: str) -> str:
+    """The host a URL points at, in the form the fetcher keys its rules on."""
+    return host_key(url)
 
 
 @dataclass(frozen=True, slots=True)

@@ -72,11 +72,11 @@ def _dispatch(
     row: SourceRow,
     eia_key: str | None,
 ) -> RunOutcome:
-    deadline = fetcher.monotonic() + RUN_BUDGET.total_seconds()
     if name == "eia_wpsr":
         if eia_key is None:
             raise ConfigError("EIA_API_KEY is not set")
         return eia_wpsr.run(conn, fetcher, store, run_id, row.feed_url, eia_key)
+    deadline = fetcher.monotonic() + RUN_BUDGET.total_seconds()
     matcher = build_term_matcher(load_refineries(conn))
     conn.rollback()
     if name == "gdelt_doc":

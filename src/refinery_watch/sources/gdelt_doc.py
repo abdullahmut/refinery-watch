@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
-from urllib.parse import urlsplit
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.objects import RawStore
@@ -17,7 +16,7 @@ from refinery_watch.sources.http import (
     RobotsDisallowed,
     strip_tracking,
 )
-from refinery_watch.sources.pages import Tally, fetch_page
+from refinery_watch.sources.pages import Tally, fetch_page, host_of
 from refinery_watch.sources.published import plausible
 from refinery_watch.sources.store import (
     NewDocument,
@@ -103,10 +102,6 @@ def parse_artlist(body: bytes) -> list[Lead]:
     return [lead for lead in map(_lead, articles) if lead is not None]
 
 
-def _host(url: str) -> str:
-    return (urlsplit(url).hostname or "").lower()
-
-
 def run(
     conn: Conn,
     fetcher: Fetcher,
@@ -125,7 +120,7 @@ def run(
         return RunOutcome("failed", 0, 0, f"{type(exc).__name__}: {exc}")
     tally = Tally()
     stored = 0
-    api_host = _host(feed_url)
+    api_host = host_of(feed_url)
     blocked: list[str] = []
     seen_urls: set[str] = set()
     english = [lead for lead in leads if lead.language.casefold() == "english"]
@@ -141,7 +136,7 @@ def run(
         if fetcher.monotonic() >= deadline:
             tally.add("deadline")
             break
-        host = _host(url)
+        host = host_of(url)
         try:
             fetched = fetch_page(fetcher, url)
         except HostBlocked as exc:

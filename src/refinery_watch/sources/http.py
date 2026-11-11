@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Final, Self
+from typing import Final, Literal, Self
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -125,7 +125,19 @@ def _charset(content_type_header: str) -> str | None:
     return None
 
 
-RETRYABLE_FAILURES: Final = frozenset({"timeout", "network_error"})
+FailureReason = Literal["timeout", "network_error", "too_large", "bad_encoding", "bad_request"]
+StopReason = Literal[
+    "http_status",
+    "retry_after_too_long",
+    "retries_exhausted",
+    "budget",
+    "timeout",
+    "network_error",
+    "too_large",
+    "bad_encoding",
+    "bad_request",
+]
+RETRYABLE_FAILURES: Final[frozenset[FailureReason]] = frozenset({"timeout", "network_error"})
 
 
 @dataclass(slots=True)
@@ -146,7 +158,7 @@ class _Robots:
 class _Stop:
     """A request that ended without a usable reply."""
 
-    reason: str
+    reason: StopReason
     status: int | None
     block: bool
 
@@ -274,11 +286,16 @@ class Fetcher:
         raise FetchError("too_many_redirects", current)
 
     def _check_target(self, url: str) -> None:
+        parsed: httpx.URL | None = None
         try:
             parsed = httpx.URL(url)
             port = parsed.port
         except (httpx.InvalidURL, UnicodeError):
-            raise AddressRefused("bad_url", url) from None
+            parsed = None
+            port = None
+        # Raised here, outside the except block, so the parser error and its URL are not chained.
+        if parsed is None:
+            raise AddressRefused("bad_url", url)
         host = host_key(url)
         if parsed.scheme not in ("http", "https") or not host or parsed.userinfo:
             raise AddressRefused("bad_url", url)
@@ -290,10 +307,12 @@ class Fetcher:
             raise BudgetExceeded("crawl_delay_exceeds_budget", url)
         if host in self._pins:
             return
+        addresses: list[str] = []
         try:
             addresses = self._resolve(host)
         except (OSError, UnicodeError):
             addresses = []
+        # Raised outside the except block for the same reason: no chained resolver error.
         if not addresses or not all(_public(a) for a in addresses):
             raise AddressRefused("non_public_address", url)
         self._pins[host] = addresses[0]
@@ -391,9 +410,11 @@ class Fetcher:
             when = when.replace(tzinfo=UTC)
         return max(0.0, (when - self._now()).total_seconds())
 
-    def _send_once(self, url: str, params: Sequence[tuple[str, str]], accept: str) -> _Reply | str:
+    def _send_once(
+        self, url: str, params: Sequence[tuple[str, str]], accept: str
+    ) -> _Reply | FailureReason:
         self._space(url)
-        failure: str | None = None
+        failure: FailureReason | None = None
         reply: _Reply | None = None
         try:
             request = self._client.build_request(

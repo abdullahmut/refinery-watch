@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from typing import Final, Literal
-from urllib.parse import urlsplit
 from xml.etree.ElementTree import Element
 
 from defusedxml import ElementTree as SafeET
@@ -18,7 +17,7 @@ from refinery_watch.sources.http import (
     RobotsDisallowed,
     strip_tracking,
 )
-from refinery_watch.sources.pages import Tally, fetch_page
+from refinery_watch.sources.pages import Tally, fetch_page, host_of
 from refinery_watch.sources.published import Published, parse_rfc822, plausible
 from refinery_watch.sources.store import (
     NewDocument,
@@ -82,10 +81,6 @@ def parse_feed(xml: bytes) -> tuple[list[FeedItem], list[str]]:
     return items, reasons
 
 
-def _host(url: str) -> str:
-    return (urlsplit(url).hostname or "").lower()
-
-
 def run(
     conn: Conn,
     fetcher: Fetcher,
@@ -107,10 +102,10 @@ def run(
     tally = Tally()
     tally.add("bad_item", len(reasons))
     stored = 0
-    feed_host = _host(feed_url)
+    feed_host = host_of(feed_url)
     for item in items[:MAX_ARTICLES]:
         link = strip_tracking(item.link)
-        if _host(link) != feed_host:
+        if host_of(link) != feed_host:
             tally.add("off_host")
             continue
         if url_known(conn, [link]):

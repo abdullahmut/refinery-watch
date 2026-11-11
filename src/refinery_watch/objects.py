@@ -54,5 +54,6 @@ class S3RawStore:
             )
         except (MinioException, urllib3.exceptions.HTTPError, OSError) as exc:
             code = str(getattr(exc, "code", None) or type(exc).__name__)
+        # Raised outside the except block so the client error, which can hold URLs, is not chained.
         if code is not None:
             raise ObjectStoreError(key, code)

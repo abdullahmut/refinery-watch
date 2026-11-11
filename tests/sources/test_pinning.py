@@ -195,3 +195,11 @@ def test_ipv6_forms_that_embed_ipv4_or_are_local_are_refused(address: str) -> No
 def test_global_ipv6_is_allowed() -> None:
     assert _public("2606:4700::1111")
     assert _public("2001:4860:4860::8888")
+
+
+def test_bad_host_error_is_not_chained() -> None:
+    fetcher = Fetcher(EMAIL, transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    with pytest.raises(AddressRefused) as info:
+        fetcher.get("https://www..example.com/story")
+    assert info.value.__cause__ is None
+    assert info.value.__context__ is None

@@ -7,10 +7,10 @@ from decimal import Decimal
 from typing import Final, Literal
 
 import psycopg
-from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
 
 from refinery_watch.db.connect import Conn
+from refinery_watch.db.events import first, require_aware
 from refinery_watch.objects import RawStore
 from refinery_watch.sources.clean import clean_text
 from refinery_watch.sources.published import Published
@@ -46,19 +46,8 @@ class NewDocument:
     prefilter_terms: tuple[str, ...]
 
 
-def _returned(row: DictRow | None) -> DictRow:
-    if row is None:
-        raise RuntimeError("insert returned no row")
-    return row
-
-
-def _require_aware(value: datetime, name: str) -> None:
-    if value.utcoffset() is None:
-        raise ValueError(f"{name} must be timezone-aware")
-
-
 def object_key(source_id: str, fetched_at: datetime, sha: str, ext: str) -> str:
-    _require_aware(fetched_at, "fetched_at")
+    require_aware(fetched_at, "fetched_at")
     day = fetched_at.astimezone(UTC)
     return f"raw/{source_id}/{day:%Y/%m/%d}/{sha}.{ext}"
 
@@ -71,7 +60,7 @@ def _both_schemes(url: str) -> list[str]:
 
 
 def url_known(conn: Conn, urls: Sequence[str]) -> bool:
-    """True when any URL is stored, whether it was stored with http or https."""
+    """True when any URL is stored, whether it was stored with http or https. Does not commit."""
     wanted = [variant for url in urls for variant in _both_schemes(url)]
     row = conn.execute(
         "SELECT 1 AS found FROM raw_document WHERE url = ANY(%s) LIMIT 1", (wanted,)
@@ -94,9 +83,14 @@ def store_document(
     *,
     in_same_tx: Callable[[int], None] | None = None,
 ) -> Stored | Skipped:
-    _require_aware(doc.fetched_at, "fetched_at")
+    """Puts the object, then inserts the row. Commits, whatever the outcome.
+
+    `in_same_tx` runs with the new row id inside the same savepoint, so its writes stand or fall
+    with the row. A failure there rolls the row back and is re-raised.
+    """
+    require_aware(doc.fetched_at, "fetched_at")
     if doc.published is not None:
-        _require_aware(doc.published.at, "published.at")
+        require_aware(doc.published.at, "published.at")
     if _hash_known(conn, doc.content_sha256):
         return Skipped("known_hash", doc.content_sha256)
     key = object_key(doc.source_id, doc.fetched_at, doc.content_sha256, doc.ext)
@@ -128,7 +122,7 @@ def store_document(
                     terms,
                 ),
             ).fetchone()
-            new_id = int(_returned(row)["id"])
+            new_id = int(first(row)["id"])
             if in_same_tx is not None:
                 in_same_tx(new_id)
     except psycopg.errors.UniqueViolation as exc:
@@ -144,12 +138,13 @@ def store_document(
 
 
 def flag_thin_page(conn: Conn, raw_document_id: int, url: str, body_chars: int, images: int) -> int:
+    """Inserts one thin_page review item and commits."""
     row = conn.execute(
         "INSERT INTO review_item (raw_document_id, candidate, reason)"
         " VALUES (%s, %s, 'thin_page') RETURNING id",
         (raw_document_id, Jsonb({"url": url, "body_chars": body_chars, "images": images})),
     ).fetchone()
-    new_id = int(_returned(row)["id"])
+    new_id = int(first(row)["id"])
     conn.commit()
     return new_id
 
@@ -206,6 +201,7 @@ def robots_cleared(status: str) -> bool:
 
 
 def source_row(conn: Conn, source_id: str) -> SourceRow:
+    """Reads the source row and refuses one without a clear robots status. Does not commit."""
     row = conn.execute(
         "SELECT id, feed_url, fetch_interval_min, robots_status FROM source WHERE id = %s",
         (source_id,),
@@ -232,6 +228,7 @@ def _log_skipped(conn: Conn, job: str, why: str) -> None:
 def start_run(
     conn: Conn, job: str, interval_min: int, stale_after: timedelta = timedelta(minutes=40)
 ) -> int | None:
+    """Sweeps stale runs, then starts a run or records a skipped one. Commits on every path."""
     conn.execute(
         "UPDATE job_run SET status = 'failed', finished_at = clock_timestamp(),"
         " error = 'stale: no finish recorded'"
@@ -254,7 +251,7 @@ def start_run(
             row = conn.execute(
                 "INSERT INTO job_run (job) VALUES (%s) RETURNING id", (job,)
             ).fetchone()
-            new_id = int(_returned(row)["id"])
+            new_id = int(first(row)["id"])
     except psycopg.errors.UniqueViolation:
         busy = True
     if busy:
@@ -265,6 +262,7 @@ def start_run(
 
 
 def finish_run(conn: Conn, run_id: int, outcome: RunOutcome) -> None:
+    """Rolls back any open work, records the outcome and commits. Raises if the run was lost."""
     note = clean_text(outcome.note)[:NOTE_MAX_CHARS] if outcome.note else None
     conn.rollback()
     cursor = conn.execute(
@@ -297,7 +295,11 @@ def write_prices(
     *,
     commit: bool = True,
 ) -> int:
-    """Inserts rows that are new or differ from the latest known value. Never updates."""
+    """Inserts rows that are new or differ from the latest known value. Never updates.
+
+    Commits once at the end unless `commit` is false, for use inside `store_document`'s
+    `in_same_tx`.
+    """
     inserted = 0
     for row in rows:
         value = row.value.quantize(PRICE_SCALE)

@@ -1,7 +1,10 @@
 """Settings read from the environment. Nothing here reads a .env file."""
 
 import os
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 class ConfigError(RuntimeError):
@@ -24,3 +27,72 @@ def refineries_csv_path() -> Path:
     if not path.is_file():
         raise ConfigError(f"REFINERIES_CSV_PATH is not a file: {path}")
     return path
+
+
+def contact_email() -> str:
+    value = _required("CONTACT_EMAIL")
+    local, sep, domain = value.partition("@")
+    if not sep or not local or not domain or "@" in domain or re.search(r"\s", value):
+        raise ConfigError("CONTACT_EMAIL is not a plain address")
+    return value
+
+
+def eia_api_key() -> str:
+    value = _required("EIA_API_KEY")
+    if not re.fullmatch(r"[A-Za-z0-9]+", value):
+        raise ConfigError("EIA_API_KEY must be letters and digits only")
+    return value
+
+
+_REGION = re.compile(r"[a-z0-9-]+")
+_BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectStoreSettings:
+    endpoint_url: str
+    region: str
+    bucket_raw: str
+    access_key: str
+    secret_key: str = field(repr=False)
+
+    @property
+    def secure(self) -> bool:
+        return urlsplit(self.endpoint_url).scheme == "https"
+
+    @property
+    def host(self) -> str:
+        return urlsplit(self.endpoint_url).netloc
+
+
+def _endpoint(value: str) -> str:
+    bad = ConfigError("OBJECT_STORE_ENDPOINT must be http:// or https:// with a host only")
+    try:
+        parts = urlsplit(value)
+        _ = parts.port
+    except ValueError:
+        raise bad from None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise bad
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        raise bad
+    if parts.username is not None or parts.password is not None or "?" in value or "#" in value:
+        raise bad
+    return value
+
+
+def object_store_settings() -> ObjectStoreSettings:
+    endpoint = _endpoint(_required("OBJECT_STORE_ENDPOINT"))
+    region = _required("OBJECT_STORE_REGION")
+    if not _REGION.fullmatch(region):
+        raise ConfigError("OBJECT_STORE_REGION must match [a-z0-9-]+")
+    bucket = _required("OBJECT_STORE_BUCKET_RAW")
+    if not _BUCKET.fullmatch(bucket):
+        raise ConfigError("OBJECT_STORE_BUCKET_RAW is not a valid bucket name")
+    return ObjectStoreSettings(
+        endpoint_url=endpoint,
+        region=region,
+        bucket_raw=bucket,
+        access_key=_required("OBJECT_STORE_ACCESS_KEY"),
+        secret_key=_required("OBJECT_STORE_SECRET_KEY"),
+    )

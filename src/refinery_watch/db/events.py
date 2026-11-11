@@ -55,6 +55,7 @@ REVIEW_SQLSTATES: Final[dict[str, ReviewReason]] = {
     "RW015": "restart_in_future",
 }
 SUPERSEDES_KEY: Final = "outage_event_supersedes_key"
+LOCK_TIMEOUT = "10s"
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +243,14 @@ def database_now(conn: Conn) -> datetime:
     return now
 
 
+def set_lock_timeout(conn: Conn, value: str) -> str:
+    """Sets lock_timeout for the current transaction. Returns the previous value."""
+    cursor = conn.execute("SELECT current_setting('lock_timeout') AS old")
+    previous: str = require_row(cursor.fetchone())["old"]
+    conn.execute("SELECT set_config('lock_timeout', %s, true)", (value,))
+    return previous
+
+
 def is_new_outage(row: NewEventRow) -> bool:
     return row.supersedes is None and row.event_type != "restart"
 
@@ -286,8 +295,10 @@ def write_event(conn: Conn, row: NewEventRow, source: SourceLink) -> Written | R
             return corroborate(conn, chains[0], source)
     try:
         with conn.transaction():
+            previous = set_lock_timeout(conn, LOCK_TIMEOUT)
             written = insert_event(conn, row)
             insert_source(conn, written.id, source, "primary")
+            set_lock_timeout(conn, previous)
     except psycopg.Error as exc:
         review = review_from(exc)
         if review is None:

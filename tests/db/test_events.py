@@ -1,3 +1,4 @@
+import time
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -5,7 +6,7 @@ from typing import Any
 
 import psycopg
 import pytest
-from tests.db.helpers import add_document, day, ts, unit_id
+from tests.db.helpers import add_document, day, open_in_schema, ts, unit_id
 
 from refinery_watch.db import events
 from refinery_watch.db.connect import Conn
@@ -354,3 +355,28 @@ def test_valid_low_confidence_flags_are_written(app_db: Conn) -> None:
         start_date=day(1),
     )
     assert isinstance(write_event(app_db, old, link(app_db, 2)), Written)
+
+
+def test_held_lock_shows_up_as_an_error_not_a_hang(
+    monkeypatch: pytest.MonkeyPatch, seeded_schema: str, app_url: str
+) -> None:
+    holder = open_in_schema(app_url, seeded_schema)
+    writer = open_in_schema(app_url, seeded_schema)
+    try:
+        holder.execute("SELECT pg_advisory_xact_lock(7746001)")
+        monkeypatch.setattr(events, "LOCK_TIMEOUT", "300ms")
+        started = time.monotonic()
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            write_event(writer, new_row(writer), link(writer, 1))
+        assert time.monotonic() - started < 5
+        writer.rollback()
+        assert writer.execute("SELECT 1 AS one").fetchone() == {"one": 1}
+    finally:
+        holder.close()
+        writer.close()
+
+
+def test_lock_timeout_is_restored_after_a_write(app_db: Conn) -> None:
+    before = app_db.execute("SHOW lock_timeout").fetchone()
+    must_write(app_db, new_row(app_db), 1)
+    assert app_db.execute("SHOW lock_timeout").fetchone() == before

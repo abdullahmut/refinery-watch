@@ -396,3 +396,9 @@ def test_each_evidence_item_appears_once_with_its_kind(db: Conn) -> None:
     assert sorted((i.ref_id, i.kind) for i in items) == sorted(
         [(inside, "outage_near"), (outside, "outage_open")]
     )
+
+
+def test_an_open_outage_without_a_label_is_named_by_its_unit(db: Conn) -> None:
+    event = lift_candidate(db, start_date=date(2026, 10, 1))
+    items = evidence_as_of(db, "R9001", date(2026, 10, 12), LATER)
+    assert [(i.ref_id, i.kind, i.unit_label) for i in items] == [(event, "outage_open", "CDU")]

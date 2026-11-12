@@ -353,7 +353,8 @@ Likely cause: first setup, a deleted bucket, or an expired token.
 In the Cloudflare dashboard, open R2 and create two buckets: `refinery-watch-raw` and
 `refinery-watch-backup`. Keep both private. Do not enable public access.
 
-Create three R2 API tokens under R2, Manage API tokens. Do not choose Admin or an account-wide scope.
+Create three R2 API tokens under R2, Manage API tokens. Do not choose Admin or an account-wide
+scope.
 
 - Ingest raw token: Object Read & Write on `refinery-watch-raw` only. It lives on the ingest
   Droplet.
@@ -372,8 +373,10 @@ Set a 90-day TTL on all three. An expired backup token stops backups silently un
 heartbeat alerts, so rotate before expiry. Copy each access key ID and secret once, straight into
 `.env`. The secret is not shown again.
 
-Add these values to `.env` on the laptop. On each Droplet, add only the values for the token it
-holds. Write them in an editor, never with `echo` or `export` on a command line:
+On each Droplet, add only the values for the token it holds. The laptop `.env` holds no backup key.
+It needs no object store values at all unless you read raw documents locally. In that case give it
+the app read-only raw token and nothing else. `OBJECT_STORE_BACKUP_*` exists only in the data
+Droplet's `.env`. Write the values in an editor, never with `echo` or `export` on a command line:
 
 ```
 OBJECT_STORE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
@@ -386,9 +389,13 @@ OBJECT_STORE_BACKUP_ACCESS_KEY=<backup token access key id>
 OBJECT_STORE_BACKUP_SECRET_KEY=<backup token secret>
 ```
 
-Verify with one put and one get. The shell expands the keys into a here-document that curl reads
-from stdin, so neither key appears in a command line or in the process list. Run it in a subshell
-so the values are gone afterwards:
+Verify on each Droplet with the token it holds. Ingest runs a put and a get with the raw
+read-write token. App runs the get only with its read-only token, after the ingest put, and does not
+delete the object. The data Droplet runs a put and a get with the backup token. The shell expands the
+keys into a here-document that curl reads from stdin, so neither key appears in a command line or in
+the process list. Run it in a subshell so the values are gone afterwards.
+
+Ingest:
 
 ```
 (
@@ -409,10 +416,45 @@ rm -f "$f"
 )
 ```
 
-The put prints nothing and the get prints `runbook check`. A `403` means the token scope or the
-keys are wrong. A `404` on the put means the bucket name in `.env` does not match the bucket.
-Delete the `runbook/check.txt` object in the dashboard afterwards.
+App, get only:
 
-To rotate a token, create a new one with the same scope and TTL, edit `.env`, repeat the check, then
-delete the old token in the dashboard. The check above covers the raw token. For the backup token,
-use `OBJECT_STORE_BACKUP_*` and the backup bucket.
+```
+(
+set -a; . ./.env; set +a
+curl -sS -f -K - "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+)
+```
+
+Data Droplet, backup token:
+
+```
+(
+set -a; . ./.env; set +a
+f=$(mktemp)
+printf 'runbook check' > "$f"
+curl -sS -f -K - -X PUT -T "$f" "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_BACKUP/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_BACKUP_ACCESS_KEY:$OBJECT_STORE_BACKUP_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+curl -sS -f -K - "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_BACKUP/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_BACKUP_ACCESS_KEY:$OBJECT_STORE_BACKUP_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+rm -f "$f"
+)
+```
+
+A put prints nothing and a get prints `runbook check`. On app, a `403` on a put is expected, because
+the token is read-only. On ingest and data, a `403` means the token scope or the keys are wrong. A
+`404` on a put means the bucket name in `.env` does not match the bucket. Delete the
+`runbook/check.txt` object in each bucket in the dashboard afterwards.
+
+To rotate a token, create a new one with the same scope and TTL, edit `.env`, repeat the check,
+then delete the old token in the dashboard. The ingest check covers the ingest raw token. The app
+check covers the app read-only token. The data check covers the backup token.

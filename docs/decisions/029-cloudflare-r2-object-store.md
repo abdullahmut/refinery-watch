@@ -31,8 +31,8 @@ Tests mock S3. No object store container runs on the data Droplet, so the 320 MB
 released.
 
 Raw documents go in the bucket named by `OBJECT_STORE_BUCKET_RAW`, at
-`raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`. The prefix is kept so one bucket could hold more than
-one kind.
+`raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`. The `ext` comes from the stored body type, `html` for
+article pages and `json` for API responses, as the adapters write it.
 
 There are three tokens, each scoped to one bucket:
 
@@ -41,6 +41,9 @@ There are three tokens, each scoped to one bucket:
   `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` names, with a different value per Droplet.
 - The data Droplet holds only the backup token, Object Read & Write on the backup bucket, in
   `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`.
+
+The laptop holds no backup key, and `OBJECT_STORE_BACKUP_*` exists only in the data Droplet's
+`.env`.
 
 R2 has no object lock, so write access is also delete access. A break-in on the data Droplet can
 delete every backup. A break-in on ingest or app cannot reach the backups. This replaces the

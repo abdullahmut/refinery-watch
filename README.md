@@ -1,8 +1,11 @@
 # refinery-watch
 
+This README describes main after the branches merge in order: infra/terraform,
+infra/data-compose, feat/schema, feat/adapters, feat/flare-signal, then the docs branches.
+
 ## What this is
 
-An in-house data layer that a refined products desk would build on top of its vendor data. It
+An in-house data layer for a refined products desk, on top of its vendor data. It
 keeps a point-in-time history of refinery outages, so a backtest sees only what was known on the
 day, and it adds alt-data signals such as satellite flaring.
 
@@ -11,14 +14,19 @@ It does not replace a commercial outage service. Its limits:
 - Coverage is whatever public sources report. Operators often say nothing, or say it late.
 - Capacity figures are as reported. Many reports give none, and the row says so.
 - It is one developer's project, not a vendor product. No history is loaded yet.
+- Point-in-time history starts at the first live write. See the point-in-time section.
 
 ## What is built today
 
 - An append-only outage store in Postgres, with `outage_as_of(T)` queries.
 - Source adapters for the Hydrocarbon Processing RSS feeds, GDELT DOC and EIA weekly refinery
-  utilisation. Each fetch checks robots.txt and a per-source status gate before it runs.
+  utilisation. Each fetch checks robots.txt and a per-source status gate before it runs. As seeded,
+  only the HP and EIA jobs run. GDELT and both flare sources (FIRMS and Overpass) stay off until
+  their robots status is checked by hand.
+- The keyword pre-filter and refinery name matching.
 - The VIIRS flare signal, on synthetic data. The fetch code is tested against hand-made fixtures.
-- Terraform and Compose for the three Droplets.
+  Flare alert sending through Resend is code only and has never been run.
+- Terraform for the three Droplets. Compose for the data Droplet.
 
 Nothing is deployed. No live data is loaded. The flare method has not been run on real FIRMS
 history, so it reports no hit rate or lead time. See
@@ -29,7 +37,10 @@ history, so it reports no hit rate or lead time. See
 - LLM extraction of events from article text.
 - The morning note.
 - Scheduling and monitoring.
+- Backups: the nightly dump, the second copy and the restore script.
 - Deploy.
+
+No regulator data is ingested yet. The `tceq_event` table exists and nothing writes to it.
 
 ## How it works
 
@@ -65,17 +76,23 @@ only go forward ([014](docs/decisions/014-migrations-and-test-database.md)). Ter
 
 **Infrastructure.** Three DigitalOcean Droplets in London on one VPC
 ([007](docs/decisions/007-why-digitalocean.md)). Postgres runs on the data Droplet. Raw documents
-and backups go to Cloudflare R2 ([029](docs/decisions/029-cloudflare-r2-object-store.md)).
+go to Cloudflare R2 ([029](docs/decisions/029-cloudflare-r2-object-store.md)), chosen but not yet
+written to. Backups are planned for the same store.
 Terraform state is local ([006](docs/decisions/006-terraform-state-location.md)). Layout and
 memory limits are in [docs/architecture.md](docs/architecture.md).
 
 ## Point-in-time rule
 
-Every row carries `known_at`, the time the system learned it. A revision is a
-new row whose `supersedes` points at the row it replaces. The old row is never marked. Current rows
-are those no later row supersedes. `outage_as_of(T)` filters both sides of that test by
-`known_at <= T`, so a revision written after T cannot change the answer for T. The tests cover
-this ([tests/db/test_outage_as_of.py](tests/db/test_outage_as_of.py)).
+Every row carries `known_at`, the time the system learned it. A revision is a new row whose
+`supersedes` points at the row it replaces. The old row is never marked. Current rows are those no
+later row supersedes. `outage_current_as_of(T)` applies that test with `known_at <= T` on both
+sides, so a revision written after T cannot change the answer for T. `outage_as_of(T)` is the
+open-outage view on top of it: current unplanned and planned rows that no restart has ended. The
+tests cover this ([tests/db/test_outage_as_of.py](tests/db/test_outage_as_of.py)).
+
+Limit: `known_at` always comes from the database clock and must be later than every existing row.
+Past outages cannot be loaded with a past `known_at`. Point-in-time history starts at the first
+live write. A backtest needs history collected from that date on.
 
 Dates are stored in UTC.
 
@@ -84,8 +101,8 @@ Dates are stored in UTC.
 Flaring and regulator records are signals. They are never capacity. A flare cannot name a unit or
 say how much was lost, so it creates no event and adds no barrels. At most it lifts a `low`
 confidence row to `medium` at query time, when every other condition for `medium` already holds
-([040](docs/decisions/040-flare-confidence-rule.md)). A regulator-only row stays a regulator
-report.
+([040](docs/decisions/040-flare-confidence-rule.md)). The flare rule never lifts a row whose
+only sources are regulator sources.
 
 ## Running it locally
 
@@ -93,16 +110,30 @@ Needs GNU Make 4, uv, Docker and bash. On Windows use Git Bash.
 
 ```
 make test               # unit tests, no database
-make test-integration   # needs the local Postgres from make up
+make test-integration   # the whole suite, needs the local Postgres from make up
 make lint
+make tf-check           # needs Terraform
 make up                 # Postgres on 127.0.0.1:5432
 make down
 ```
 
-Copy `.env.example` to `.env` before `make up`. The keys the local stack needs:
-`POSTGRES_PASSWORD`, `PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. Jobs also read `PG_HOST`,
-`PG_DATABASE`, `PG_APP_USER`, the `OBJECT_STORE_*` keys, `CONTACT_EMAIL` and, for the adapters that
-need them, `EIA_API_KEY` and `FIRMS_MAP_KEY`. Never commit `.env`.
+Copy `.env.example` to `.env` before `make up`. The local stack needs `POSTGRES_PASSWORD`,
+`PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. `.env.example` is updated on infra/data-compose. The
+operator must add the `PG_*` and `OBJECT_STORE_*` keys by hand. Never commit `.env`.
+
+Every key `config.py` reads:
+
+- Database, app role: `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_APP_USER`, `PG_APP_PASSWORD`, or
+  `APP_DATABASE_URL` instead of the others.
+- Database, owner role, for migrate and seed only: `PG_OWNER_USER`, `PG_OWNER_PASSWORD`, or
+  `OWNER_DATABASE_URL`. Type these in the shell. The owner password is stored only in the data
+  Droplet's `.env`.
+- Objects: `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_REGION`, `OBJECT_STORE_BUCKET_RAW`,
+  `OBJECT_STORE_ACCESS_KEY`, `OBJECT_STORE_SECRET_KEY`.
+- Sources: `CONTACT_EMAIL`, `EIA_API_KEY`, `FETCH_IPV6`, `FIRMS_MAP_KEY`.
+- Files: `REFINERIES_CSV_PATH` and `REFINERY_LOCATIONS_CSV_PATH`. The refinery list is an operator
+  file, not in `data/`.
+- Mail: `NOTE_RECIPIENTS`, `NOTE_FROM`, `RESEND_API_KEY`, `FLARE_ALERT_DAILY_MAX`.
 
 ## Repository map
 
@@ -111,6 +142,8 @@ need them, `EIA_API_KEY` and `FIRMS_MAP_KEY`. Never commit `.env`.
 - `src/refinery_watch/extract/` keyword pre-filter and refinery matching.
 - `src/refinery_watch/flare/` footprints, FIRMS fetch, score, alerts.
 - `src/refinery_watch/mail/` mail sender.
+- `src/refinery_watch/config.py` settings from the environment. `objects.py` S3 storage for raw
+  documents. `dates.py` publication date handling. `terms.py` keyword lists.
 - `data/` source list and unit-to-product map.
 - `infra/terraform/`, `infra/cloud-init/`, `infra/compose/` the three Droplets.
 - `tests/` mirrors `src/`. Tests marked `integration` need Postgres.
@@ -118,20 +151,45 @@ need them, `EIA_API_KEY` and `FIRMS_MAP_KEY`. Never commit `.env`.
 
 ## Known open issues
 
-Five tests are marked `xfail(strict=True)` on the flare branch. Each states a defect that is not
+After the merges there are 10 tests marked `xfail(strict=True)`. Each states a defect that is not
 fixed yet. A strict xfail fails the run if the defect disappears, so the mark cannot go stale.
+This branch holds the last five, from feat/adapters and feat/flare-signal. The first five come
+from feat/schema.
 
-- [tests/sources/test_open_issues.py](tests/sources/test_open_issues.py): connect timeout times
-  address count overruns the request cap; a literal space is not normalised in robots matching;
-  every host builds its own SSL context.
-- [tests/db/test_open_issues_cli.py](tests/db/test_open_issues_cli.py): a bad `FETCH_IPV6` leaves
-  a `running` job row.
-- [tests/db/test_flare_alert.py](tests/db/test_flare_alert.py): an alert names a unit by code, not
-  by tag.
+Schema, in `tests/db/test_open_issues.py`:
+
+- The one-day UTC slack lets a restart dated tomorrow close today, because the source's own
+  publication date is not used (rule RW015).
+- The restart lookup has no date window, so a restart dated before a re-trip is absorbed into the
+  older restart.
+- `outage_cutoff` has a 5 s lock timeout, so a slow writer makes the note job fail.
+- `take_write_lock` in autocommit releases the lock at once, so the duplicate lookup runs
+  unlocked.
+- Corroboration checks only the newest row, so a document linked to an older row is linked twice
+  and `corroboration_added` stays true.
+
+Fetcher, in `tests/sources/test_open_issues.py`:
+
+- Connect timeout times address count overruns the request cap and budget.
+- A literal space is not normalised to `%20` in robots matching.
+- Every host builds its own SSL context.
+
+Adapter CLI, in `tests/db/test_open_issues_cli.py`:
+
+- A bad `FETCH_IPV6` is read after the run starts and leaves a `running` job row.
+
+Flare, in `tests/db/test_flare_alert.py`:
+
+- An alert names a unit by code, not by tag.
 
 ## Data credits
 
-- Fire detections: NASA FIRMS (VIIRS active fire).
-- Plant outlines: OpenStreetMap contributors, under the ODbL.
-- Refinery utilisation: U.S. Energy Information Administration (EIA).
-- News leads: the GDELT Project.
+- News feeds: Hydrocarbon Processing, read for reference use
+  ([035](docs/decisions/035-hp-reading-is-not-ai-training.md)).
+- We acknowledge the use of data and imagery from NASA's Fire Information for Resource Management
+  System (FIRMS), part of NASA's Earth Science Data and Information System (ESDIS). VIIRS active
+  fire products from S-NPP and NOAA-20. Product DOIs to add.
+- © OpenStreetMap contributors, https://www.openstreetmap.org/copyright. Data via the Overpass
+  API.
+- GDELT Project, https://www.gdeltproject.org.
+- U.S. Energy Information Administration (EIA).

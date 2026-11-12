@@ -11,12 +11,13 @@ from tests.db.flare_helpers import (
     seed_days,
     write_day,
 )
+from tests.db.flare_helpers import no_network as no_network
 from tests.db.helpers import add_document, open_in_schema
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.flare.score import write_days
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_network")]
 
 FIRST = date(2026, 1, 1)
 TARGET = FIRST + timedelta(days=90)

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from tests.db.flare_helpers import no_network as no_network
 from tests.db.helpers import open_in_schema
 from tests.sources.helpers import FakeStore, Handler, make_fetcher
 
@@ -24,7 +25,7 @@ from refinery_watch.flare.overpass import (
 from refinery_watch.sources.http import Fetcher
 from refinery_watch.sources.store import RunOutcome, finish_run
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_network")]
 
 HANDMADE = Path(__file__).resolve().parents[1] / "fixtures" / "sources" / "handmade"
 ONE_WAY = (HANDMADE / "overpass_one_way_handmade.json").read_bytes()

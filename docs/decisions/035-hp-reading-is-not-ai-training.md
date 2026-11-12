@@ -16,20 +16,25 @@ must say plainly which side of that line this falls on before the source runs.
 ## Decision
 
 We run HP as reference use. We read an article to pull outage facts (plant, unit, dates, cause)
-into our own database for a refined products desk. That is the same use as an analyst reading it.
-No model is trained or tuned on the text, by us or for us. The text goes to the model provider's
-API only for extraction. We rely on the provider's commercial API terms, which say API inputs are
-not used to train its models. We have not audited the provider. We take that commitment at its
-word and re-read the terms when they change.
+into our own database for a refined products desk. Exactly this happens: the article is fetched,
+stored in our object store, and its text is sent to the Anthropic API for extraction only. No
+model is trained or tuned on the text, by us or for us. We rely on the provider's commercial
+terms, which say API inputs are not used to train its models. We have not audited the provider.
+
+Two documents decide this: the Hydrocarbon Processing site terms and robots.txt, and Anthropic's
+commercial terms of service. Neither document has been re-read on a recorded date; the operator
+reads both and records the date here before the HP adapter runs unattended. Nothing in the code
+watches either for changes; the operator re-reads them at each review of this record.
 
 Record 015 already sets the fetch rules and the live robots.txt check. This record does not change
-them. If the publisher objects, or its terms change, we stop. The operator sets the `robots_status`
-of `hp_news` and `hp_refining` to a value outside the cleared set and reloads the source list, and
-the gate refuses both rows on the next run. We then ask the publisher what it wants done with the
-copies already stored.
+them. If the publisher objects, or either document changes against us, we stop. The edit: set
+`robots_status` to `withdrawn` for `hp_news` and `hp_refining` in data/sources.csv, update
+`SOURCES_CSV_SHA256` in tests/test_sources_csv.py, and reload the source list. `withdrawn` is
+outside the cleared set, and a test checks that the gate refuses it. We then ask the publisher
+what it wants done with the copies already stored.
 
 ## Consequences
 
 HP can run under the cleared status it already has. The clearance rests on two things we do not
 control: the publisher's terms and the provider's no-training terms. If either changes, HP stops
-until we decide again. To undo, change the two status values. No code changes.
+until we decide again. To undo, change the two status values and the hash. No other code changes.

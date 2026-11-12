@@ -277,6 +277,23 @@ Verify as in the entry above: `postgres` is `healthy` and `ss -ltn | grep 5432` 
 address. If `up` still fails on the bind, check `ip -4 addr show eth1` for the private address and
 compare it with `DATA_BIND_ADDR`.
 
+## How each job connects to Postgres
+
+Ingest and app jobs connect as `refinery_app`. They read `PG_HOST`, `PG_PORT` (default 5432),
+`PG_DATABASE` (default `refinery_watch`), `PG_APP_USER` (default `refinery_app`) and
+`PG_APP_PASSWORD`. The optional `APP_DATABASE_URL` replaces all of them. Set one way or the
+other, never both: the job refuses to start if both are set.
+
+Migrations and seeds connect as `refinery_owner`. The operator supplies `PG_OWNER_PASSWORD`
+(with `PG_OWNER_USER` if the role name differs), or `OWNER_DATABASE_URL`, in the shell at run
+time only. Neither goes in any `.env`, on any Droplet. The same both-set rule applies.
+
+Each role reads only its own override. Plain `DATABASE_URL` is not read by anything. Errors name
+the missing variable and never print a password or a connection string.
+
+Verify: with only `APP_DATABASE_URL` set, `python -m refinery_watch.db.migrate` exits 2 and names
+`PG_HOST`.
+
 ## Rotate a database password
 
 Symptom: a password leaked or must change. The init script does not run again, so editing `.env`

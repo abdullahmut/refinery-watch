@@ -35,12 +35,6 @@ resource "digitalocean_firewall" "data" {
     source_tags = [digitalocean_tag.role["app"].id, digitalocean_tag.role["ingest"].id]
   }
 
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "9000"
-    source_tags = [digitalocean_tag.role["app"].id, digitalocean_tag.role["ingest"].id]
-  }
-
   dynamic "outbound_rule" {
     for_each = local.role_egress
     content {

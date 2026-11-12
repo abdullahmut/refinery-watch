@@ -203,11 +203,11 @@ def test_data_ports_only_from_app_and_ingest_tags_on_data() -> None:
     expected = ['digitalocean_tag.role["app"].id', 'digitalocean_tag.role["ingest"].id']
     for firewall, rule_list in inbound_rules().items():
         for rule in rule_list:
-            if ports_of(rule) & {5432, 9000}:
+            if ports_of(rule) & {5432}:
                 assert firewall == "data"
                 assert rule["source_tags"] == expected
                 assert "source_addresses" not in rule
-    assert open_ports("data") == {5432, 9000}
+    assert open_ports("data") == {5432}
 
 
 def test_https_only_on_app() -> None:
@@ -220,7 +220,7 @@ def test_no_other_inbound_ports() -> None:
     every: set[int] = set()
     for firewall in inbound_rules():
         every |= open_ports(firewall)
-    assert every == {ssh_port_default(), 443, 5432, 9000}
+    assert every == {ssh_port_default(), 443, 5432}
 
 
 def test_ssh_rule_port_is_the_variable() -> None:

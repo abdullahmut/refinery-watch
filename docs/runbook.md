@@ -91,7 +91,7 @@ Verify:
 - On ingest, `free -m` shows at least 250 MB available. Recorded value: none yet.
 - `ssh -p <ssh_port> root@<public ip>` is refused.
 - `ssh -o PubkeyAuthentication=no -p <ssh_port> deploy@<public ip>` is refused.
-- `nc -vz -w 5 <data public ip> 5432` and `9000` time out.
+- `nc -vz -w 5 <data public ip> 5432` times out.
 
 ### What changes reach running Droplets
 

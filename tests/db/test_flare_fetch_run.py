@@ -275,3 +275,18 @@ def test_a_known_reply_does_not_add_coverage_twice(app: Conn) -> None:
     fetch_one(app, fetcher, FakeStore(), run_id, FIRMS_KEY, plan, footprints)
     fetch_one(app, fetcher, FakeStore(), run_id, FIRMS_KEY, plan, footprints)
     assert table_count(app, "flare_coverage") == 2
+
+
+def test_a_cross_host_redirect_is_refused_and_not_followed(app: Conn) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "firms.modaps.eosdis.nasa.gov":
+            return httpx.Response(302, headers={"location": "https://other.example.org/steal"})
+        return httpx.Response(200, content=b"elsewhere")
+
+    fetcher, net, _ = make_fetcher(handler)
+    outcome = go(app, fetcher, FakeStore())
+    assert outcome.status == "failed"
+    assert outcome.note is not None
+    assert outcome.note.startswith("AddressRefused: cross_host_redirect")
+    assert FIRMS_KEY not in outcome.note
+    assert {r.url.host for r in net.requests} == {"firms.modaps.eosdis.nasa.gov"}

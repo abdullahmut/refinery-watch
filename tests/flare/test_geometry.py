@@ -7,7 +7,7 @@ from refinery_watch.flare.geometry import (
     EARTH_RADIUS_M,
     BBox,
     Ring,
-    close_ring,
+    as_closed_ring,
     distance_to_ring_m,
     haversine_m,
     point_in_ring,
@@ -121,14 +121,14 @@ def test_bbox_padded_union_width_height() -> None:
     assert (box.width(), box.height()) == (2.0, 1.0)
 
 
-def test_close_ring_needs_four_closed_points() -> None:
-    assert close_ring(list(SQUARE)) == SQUARE
-    assert close_ring(list(SQUARE)[:3]) is None
-    assert close_ring([]) is None
+def test_as_closed_ring_needs_four_closed_points() -> None:
+    assert as_closed_ring(list(SQUARE)) == SQUARE
+    assert as_closed_ring(list(SQUARE)[:3]) is None
+    assert as_closed_ring([]) is None
     open_ring = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-    assert close_ring(open_ring) is None
+    assert as_closed_ring(open_ring) is None
     triangle = [(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)]
-    assert close_ring(triangle) is None
+    assert as_closed_ring(triangle) is None
 
 
 def test_ring_within_m_inside_near_and_far() -> None:

@@ -99,7 +99,7 @@ class Footprint:
         """Inside the footprint, or within one pixel (BUFFER_M) of its edge."""
         if self.kind == "point_radius":
             return haversine_m(self.center_lat, self.center_lon, lat, lon) <= (self.radius_m or 0)
-        if not self.search_box().contains(lat, lon):
+        if not self.search_box().contains_wrapped(lat, lon):
             return False
         if self.kind == "osm_bounds":
             return True

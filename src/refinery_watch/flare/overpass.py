@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from refinery_watch.flare.geometry import (
-    EARTH_RADIUS_M,
     MAX_VERTICES,
     BBox,
     Ring,
-    close_ring,
+    as_closed_ring,
     point_in_ring,
+    radius_bbox,
     ring_bbox,
 )
 
@@ -97,7 +97,7 @@ def _points_bbox(points: Sequence[tuple[float, float]]) -> BBox | None:
 
 def _way_shape(element: Mapping[str, object]) -> OsmShape:
     points = _points(element.get("geometry", []))
-    ring = close_ring(points)
+    ring = as_closed_ring(points)
     bounds = _bounds(element.get("bounds")) or _points_bbox(points)
     return OsmShape(f"way/{element['id']}", (ring,) if ring else (), bounds)
 
@@ -113,7 +113,7 @@ def _relation_shape(element: Mapping[str, object]) -> OsmShape:
             continue
         points = _points(member.get("geometry", []))
         every_point.extend(points)
-        ring = close_ring(points)
+        ring = as_closed_ring(points)
         if ring:
             rings.append(ring)
     bounds = _bounds(element.get("bounds")) or _points_bbox(every_point)
@@ -141,12 +141,6 @@ def parse_elements(body: bytes) -> list[OsmShape]:
         elif element.get("type") == "relation":
             shapes.append(_relation_shape(element))
     return shapes
-
-
-def radius_bbox(lat: float, lon: float, radius_m: int) -> BBox:
-    d_lat = math.degrees(radius_m / EARTH_RADIUS_M)
-    d_lon = d_lat / max(math.cos(math.radians(lat)), 0.01)
-    return BBox(lon - d_lon, lat - d_lat, lon + d_lon, lat + d_lat)
 
 
 def _vertices(rings: Sequence[Ring]) -> int:

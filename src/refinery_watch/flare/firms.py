@@ -19,7 +19,7 @@ Satellite = Literal["SNPP", "NOAA20"]
 Product = Literal["NRT", "SP"]
 SATELLITES: Final[tuple[Satellite, ...]] = ("SNPP", "NOAA20")
 LIVE_RANGE_DAYS: Final = 2
-BACKFILL_RANGE_DAYS: Final = 5  # the API maximum is 5 in the public documentation
+BACKFILL_RANGE_DAYS: Final = 5  # days per backfill request
 MAX_RANGE_DAYS: Final = 5
 MAX_BOX_DEGREES: Final = 5.0
 BOX_PAD_DEGREES: Final = 0.05
@@ -178,10 +178,20 @@ def safe_note(exc: FetchError, key: str) -> str:
     return redacted(f"{type(exc).__name__}: {exc.reason} host={exc.host}{status}", key)
 
 
-def _clamped(box: BBox) -> BBox:
-    return BBox(
-        max(-180.0, box.west), max(-90.0, box.south), min(180.0, box.east), min(90.0, box.north)
-    )
+def _requests_for(box: BBox, ids: tuple[str, ...]) -> list[QueryBox]:
+    """The box clamped to the globe. One that runs past +-180 becomes two, one each side."""
+    south, north = max(-90.0, box.south), min(90.0, box.north)
+    if box.west < -180.0:
+        return [
+            QueryBox(BBox(box.west + 360.0, south, 180.0, north), ids),
+            QueryBox(BBox(-180.0, south, min(box.east, 180.0), north), ids),
+        ]
+    if box.east > 180.0:
+        return [
+            QueryBox(BBox(max(box.west, -180.0), south, 180.0, north), ids),
+            QueryBox(BBox(-180.0, south, box.east - 360.0, north), ids),
+        ]
+    return [QueryBox(BBox(box.west, south, box.east, north), ids)]
 
 
 def _region_box(group: Sequence[Footprint]) -> BBox:
@@ -202,12 +212,12 @@ def query_boxes(footprints: Sequence[Footprint]) -> list[QueryBox]:
         whole = _region_box(group)
         if whole.width() <= MAX_BOX_DEGREES and whole.height() <= MAX_BOX_DEGREES:
             ids = tuple(f.refinery_id for f in group)
-            boxes.append(QueryBox(_clamped(whole.padded(BOX_PAD_DEGREES)), ids))
+            boxes.extend(_requests_for(whole.padded(BOX_PAD_DEGREES), ids))
             continue
         for footprint in group:
             padded = footprint.search_box().padded(BOX_PAD_DEGREES)
-            boxes.append(QueryBox(_clamped(padded), (footprint.refinery_id,)))
-    return sorted(boxes, key=lambda b: b.refinery_ids)
+            boxes.extend(_requests_for(padded, (footprint.refinery_id,)))
+    return sorted(boxes, key=lambda b: (b.refinery_ids, b.bbox.west))
 
 
 MAX_GRID_CELLS: Final = 400
@@ -228,7 +238,8 @@ def _grid(entries: Sequence[Entry]) -> tuple[dict[Cell, list[Entry]], list[Entry
             continue
         for row in rows:
             for column in columns:
-                cells.setdefault((row, column), []).append(entry)
+                wrapped = (column + 180) % 360 - 180
+                cells.setdefault((row, wrapped), []).append(entry)
     return cells, wide
 
 
@@ -242,7 +253,7 @@ def assign(
     for detection in detections:
         cell = (math.floor(detection.lat), math.floor(detection.lon))
         for footprint, search in [*cells.get(cell, ()), *wide]:
-            if search.contains(detection.lat, detection.lon) and footprint.contains(
+            if search.contains_wrapped(detection.lat, detection.lon) and footprint.contains(
                 detection.lat, detection.lon
             ):
                 yield footprint.refinery_id, detection

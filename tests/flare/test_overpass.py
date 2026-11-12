@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from refinery_watch.flare.geometry import MAX_VERTICES
+from refinery_watch.flare.geometry import MAX_VERTICES, radius_bbox
 from refinery_watch.flare.overpass import (
     FootprintChoice,
     OsmShape,
@@ -12,7 +12,6 @@ from refinery_watch.flare.overpass import (
     build_query,
     choose_footprint,
     parse_elements,
-    radius_bbox,
 )
 
 HANDMADE = Path(__file__).resolve().parents[1] / "fixtures" / "sources" / "handmade"

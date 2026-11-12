@@ -13,11 +13,11 @@ from tests.netguard import block_network
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.flare.footprints import Location, write_footprint
+from refinery_watch.flare.geometry import radius_bbox
 from refinery_watch.flare.overpass import (
     FootprintChoice,
     choose_footprint,
     parse_elements,
-    radius_bbox,
 )
 
 SHA = "ab" * 32

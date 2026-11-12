@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from datetime import UTC, date, datetime
 
 import httpx
+import psycopg
 import pytest
 from tests.db.flare_helpers import (
     FIRMS_KEY,
@@ -17,8 +18,10 @@ from tests.sources.helpers import FakeStore, make_fetcher
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.flare.fetch import backfill_plans, run_backfill
-from refinery_watch.flare.firms import QueryBox, parse_availability
-from refinery_watch.flare.geometry import BBox
+from refinery_watch.flare.firms import QueryBox, parse_availability, query_boxes
+from refinery_watch.flare.footprints import Location, current_footprints, write_footprint
+from refinery_watch.flare.geometry import BBox, radius_bbox
+from refinery_watch.flare.overpass import FootprintChoice
 from refinery_watch.sources.http import Fetcher
 from refinery_watch.sources.store import RunOutcome, finish_run
 
@@ -141,17 +144,17 @@ def test_the_availability_request_is_redacted_nowhere_stored(app: Conn) -> None:
 
 def test_a_run_stops_at_max_requests_and_the_next_one_picks_up(app: Conn) -> None:
     fetcher, net, _ = make_fetcher(handler)
-    first = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=2)
+    first = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=3)
     assert (first.status, first.rows_in) == ("ok", 3)
     assert first.note == "2 requests left; run again"
     area = [r for r in net.requests if "/area/" in r.url.path]
     assert len(area) == 2
     assert {r.url.path.rsplit("/", 1)[1] for r in area} == {"2026-06-01"}
-    second = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=2)
+    second = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=3)
     assert second.rows_in == 3
     area_two = [r for r in net.requests if "/area/" in r.url.path][2:]
     assert {r.url.path.rsplit("/", 1)[1] for r in area_two} == {"2026-06-06"}
-    third = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=2)
+    third = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=3)
     assert (third.rows_in, third.rows_out, third.note) == (1, 0, None)
 
 
@@ -223,3 +226,74 @@ def test_later_days_are_scored_against_earlier_backfilled_ones(app: Conn) -> Non
         "SELECT baseline_days FROM flare_day WHERE day = %s", (date(2026, 6, 5),)
     ).fetchone()
     assert row == {"baseline_days": 4}
+
+
+def test_the_availability_call_counts_against_max_requests(app: Conn) -> None:
+    fetcher, net, _ = make_fetcher(handler)
+    outcome = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=1)
+    assert [r.url.path.split("/")[2] for r in net.requests] == ["data_availability"]
+    assert (outcome.status, outcome.rows_in) == ("ok", 1)
+    assert outcome.note == "4 requests left; run again"
+    two = go(app, fetcher, date(2026, 6, 1), date(2026, 6, 10), max_requests=2)
+    assert two.rows_in == 2
+    assert len([r for r in net.requests if "/area/" in r.url.path]) == 1
+
+
+def _add_refinery(owner_url: str, schema: str, refinery_id: str) -> None:
+    with psycopg.connect(owner_url, options=f"-c search_path={schema}") as conn:
+        conn.execute(
+            "INSERT INTO refinery (id, name, country, region, status)"
+            " VALUES (%s, %s, 'United States', 'US Gulf', 'operating')",
+            (refinery_id, f"Plant {refinery_id}"),
+        )
+
+
+def _circle(conn: Conn, refinery_id: str, lat: float, lon: float) -> None:
+    place = Location(refinery_id, lat, lon, 2500, None, None, False)
+    choice = FootprintChoice("point_radius", (), (), radius_bbox(lat, lon, 2500))
+    assert write_footprint(conn, place, choice, None) is not None
+    conn.commit()
+
+
+def test_a_plant_added_inside_an_unchanged_box_is_still_backfilled(
+    seeded_schema: str, app_url: str, pg_server: str
+) -> None:
+    for refinery_id in ("R9005", "R9006"):
+        _add_refinery(pg_server, seeded_schema, refinery_id)
+    conn = open_in_schema(app_url, seeded_schema)
+    try:
+        seed_plant(conn)
+        _circle(conn, "R9006", 29.40, -95.40)
+        before = [b.bbox for b in query_boxes(current_footprints(conn))]
+        conn.rollback()
+
+        def area(request: httpx.Request) -> httpx.Response:
+            if "/data_availability/" in request.url.path:
+                return httpx.Response(200, content=AVAILABILITY)
+            return httpx.Response(200, content=detection_at(date(2026, 6, 1), 29.60, -95.20))
+
+        fetcher, _, _ = make_fetcher(area)
+        assert go(conn, fetcher, date(2026, 6, 1), date(2026, 6, 5)).status == "ok"
+        _circle(conn, "R9005", 29.60, -95.20)
+        assert [b.bbox for b in query_boxes(current_footprints(conn))] == before
+        conn.rollback()
+        second = go(conn, fetcher, date(2026, 6, 1), date(2026, 6, 5))
+        assert second.status == "ok"
+        cover = conn.execute(
+            "SELECT count(*) AS n FROM flare_coverage WHERE refinery_id = 'R9005'"
+        ).fetchone()
+        assert cover == {"n": 2 * 5}
+        found = conn.execute(
+            "SELECT count(*) AS n FROM flare_detection WHERE refinery_id = 'R9005'"
+        ).fetchone()
+        assert found == {"n": 2}
+        third = go(conn, fetcher, date(2026, 6, 1), date(2026, 6, 5))
+        assert third.rows_in == 1
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def detection_at(start: date, lat: float, lon: float) -> bytes:
+    row = f"{lat:.5f},{lon:.5f},330.5,0.39,0.36,{start},0615,N20,VIIRS,n,2.0,295.1,5.00,N\n"
+    return (HEADER + row).encode()

@@ -16,11 +16,11 @@ from refinery_watch.flare.footprints import (
     run_footprints,
     write_footprint,
 )
+from refinery_watch.flare.geometry import radius_bbox
 from refinery_watch.flare.overpass import (
     FootprintChoice,
     choose_footprint,
     parse_elements,
-    radius_bbox,
 )
 from refinery_watch.sources.http import Fetcher
 from refinery_watch.sources.store import RunOutcome, finish_run

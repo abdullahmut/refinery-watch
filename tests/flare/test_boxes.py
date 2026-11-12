@@ -4,8 +4,7 @@ from decimal import Decimal
 
 from refinery_watch.flare.firms import Detection, QueryBox, assign, query_boxes
 from refinery_watch.flare.footprints import Footprint
-from refinery_watch.flare.geometry import BBox, Ring
-from refinery_watch.flare.overpass import radius_bbox
+from refinery_watch.flare.geometry import BBox, Ring, radius_bbox
 
 WHEN = datetime(2026, 11, 11, 7, 42, tzinfo=UTC)
 
@@ -76,9 +75,9 @@ def test_output_order_does_not_depend_on_input_order() -> None:
 
 
 def test_boxes_are_clamped_to_the_globe() -> None:
-    boxes = query_boxes([plant(1, "Other", 89.99, 179.99, 0.005)])
+    boxes = query_boxes([plant(1, "Other", 89.99, 100.0, 0.005)])
     assert boxes[0].bbox.north == 90.0
-    assert boxes[0].bbox.east == 180.0
+    assert len(boxes) == 1
 
 
 def test_no_footprints_no_boxes() -> None:
@@ -147,3 +146,33 @@ def test_assign_is_lazy() -> None:
 
     iterator = assign(stream(), [left], box)  # type: ignore[arg-type]
     assert next(iterator)[0] == "R9001"
+
+
+def test_a_tall_region_gives_one_box_per_plant() -> None:
+    boxes = query_boxes([circle(1, "Other", 20.0, 50.0), circle(2, "Other", 30.0, 50.5)])
+    assert [b.refinery_ids for b in boxes] == [("R9001",), ("R9002",)]
+
+
+def test_a_plant_on_the_antimeridian_is_requested_on_both_sides() -> None:
+    plant = circle(1, "Other", -16.5, 179.99)
+    boxes = query_boxes([plant])
+    assert len(boxes) == 2
+    assert {b.refinery_ids for b in boxes} == {("R9001",)}
+    assert all(-180.0 <= b.bbox.west < b.bbox.east <= 180.0 for b in boxes)
+    assert any(b.bbox.contains(-16.5, -179.995) for b in boxes)
+    assert any(b.bbox.contains(-16.5, 179.95) for b in boxes)
+
+
+def test_a_plant_just_west_of_the_antimeridian_is_requested_on_both_sides() -> None:
+    boxes = query_boxes([circle(1, "Other", 10.0, -179.99)])
+    assert len(boxes) == 2
+    assert any(b.bbox.contains(10.0, 179.995) for b in boxes)
+    assert any(b.bbox.contains(10.0, -179.95) for b in boxes)
+
+
+def test_a_detection_across_the_antimeridian_is_assigned() -> None:
+    plant = circle(1, "Other", -16.5, 179.99, 2500)
+    box = QueryBox(BBox(-180.0, -17.0, -179.0, -16.0), ("R9001",))
+    found = list(assign([hit(-16.5, -179.995), hit(-16.5, 179.5)], [plant], box))
+    assert [(r, d.lon) for r, d in found] == [("R9001", -179.995)]
+    assert plant.contains(-16.5, -179.995)

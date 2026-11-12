@@ -2,7 +2,7 @@
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Final
 
@@ -35,6 +35,7 @@ from refinery_watch.sources.http import BudgetExceeded, Fetcher, FetchError, Hos
 from refinery_watch.sources.store import NewDocument, RunOutcome, RunStatus, Stored, store_document
 
 NO_FOOTPRINTS: Final = "no footprints; run the footprints command first"
+AVAILABILITY_REQUESTS: Final = 1  # the data availability call counts against max_requests
 REDACTED_BYTES: Final = b"REDACTED"
 
 
@@ -62,14 +63,12 @@ def _content_prefix(plan: FetchPlan) -> bytes:
     box = plan.box.bbox
     corners = f"{box.west:.4f},{box.south:.4f},{box.east:.4f},{box.north:.4f}"
     name = source_name(plan.satellite, plan.product)
-    return f"{name}|{corners}|{plan.start:%Y-%m-%d}|{plan.range_days}\n".encode()
+    plants = ",".join(sorted(plan.box.refinery_ids))
+    return f"{name}|{corners}|{plan.start:%Y-%m-%d}|{plan.range_days}|{plants}\n".encode()
 
 
 def _clean_body(body: bytes, key: str) -> bytes:
-    cleaned = body.replace(key.encode(), REDACTED_BYTES) if key else body
-    if key and key.encode() in cleaned:
-        raise RuntimeError("key redaction failed")
-    return cleaned
+    return body.replace(key.encode(), REDACTED_BYTES) if key else body
 
 
 def _write_rows(
@@ -133,7 +132,7 @@ def fetch_one(
 ) -> int:
     """One area request. Returns the detections written; 0 for a reply already stored."""
     path = area_path(key, plan.satellite, plan.product, plan.box.bbox, plan.range_days, plan.start)
-    reply = fetcher.get(BASE + path, accept="text/csv")
+    reply = fetcher.get(BASE + path, accept="text/csv", same_host=True)
     body = _clean_body(reply.body, key)
     hits = list(assign(parse_area_csv(body), footprints, plan.box))
     written: list[int] = []
@@ -169,17 +168,13 @@ class Tally:
     requests: int = 0
     detections: int = 0
     failures: int = 0
-    notes: list[str] | None = None
-    touched: dict[tuple[str, ...], set[date]] | None = None
+    notes: list[str] = field(default_factory=list)
+    touched: dict[tuple[str, ...], set[date]] = field(default_factory=dict)
 
     def note(self, text: str) -> None:
-        if self.notes is None:
-            self.notes = []
         self.notes.append(text)
 
     def touch(self, plan: FetchPlan) -> None:
-        if self.touched is None:
-            self.touched = {}
         self.touched.setdefault(plan.box.refinery_ids, set()).update(plan.days())
 
 
@@ -217,7 +212,7 @@ def run_plans(
 def score_touched(conn: Conn, tally: Tally, backfilled: bool, run_id: int) -> int:
     """Writes flare_day rows for every plant and day a successful fetch covered."""
     written = 0
-    for ids, days in sorted((tally.touched or {}).items()):
+    for ids, days in sorted(tally.touched.items()):
         written += write_days(conn, ids, sorted(days), backfilled, run_id)
     return written
 
@@ -320,7 +315,7 @@ def run_backfill(
     if not footprints:
         return RunOutcome("failed", 0, 0, NO_FOOTPRINTS)
     try:
-        reply = fetcher.get(BASE + availability_path(key), accept="text/csv")
+        reply = fetcher.get(BASE + availability_path(key), accept="text/csv", same_host=True)
         availability = parse_availability(_clean_body(reply.body, key))
     except FetchError as exc:
         return RunOutcome("failed", 1, 0, safe_note(exc, key))
@@ -328,10 +323,11 @@ def run_backfill(
         return RunOutcome("failed", 1, 0, redacted(f"{type(exc).__name__}: {exc}", key))
     plans = backfill_plans(conn, query_boxes(footprints), availability, first, last)
     conn.rollback()
-    tally = run_plans(conn, fetcher, store, run_id, key, plans[:max_requests], footprints)
-    tally.requests += 1
+    budget = max(0, max_requests - AVAILABILITY_REQUESTS)
+    tally = run_plans(conn, fetcher, store, run_id, key, plans[:budget], footprints)
+    tally.requests += AVAILABILITY_REQUESTS
     score_touched(conn, tally, True, run_id)
-    left = len(plans) - min(len(plans), max_requests)
+    left = len(plans) - min(len(plans), budget)
     if left:
         tally.note(f"{left} requests left; run again")
     return _outcome(tally)

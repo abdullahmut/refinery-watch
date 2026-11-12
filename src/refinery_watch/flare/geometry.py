@@ -25,6 +25,10 @@ class BBox:
     def contains(self, lat: float, lon: float) -> bool:
         return self.south <= lat <= self.north and self.west <= lon <= self.east
 
+    def contains_wrapped(self, lat: float, lon: float) -> bool:
+        """Like `contains`, but a box that runs past +-180 also holds the longitude's other side."""
+        return any(self.contains(lat, lon + shift) for shift in (0.0, -360.0, 360.0))
+
     def padded(self, degrees: float) -> "BBox":
         return BBox(
             self.west - degrees, self.south - degrees, self.east + degrees, self.north + degrees
@@ -43,6 +47,13 @@ class BBox:
 
     def height(self) -> float:
         return self.north - self.south
+
+
+def radius_bbox(lat: float, lon: float, radius_m: int) -> BBox:
+    """The box that holds a circle of `radius_m` round the point."""
+    d_lat = math.degrees(radius_m / EARTH_RADIUS_M)
+    d_lon = d_lat / max(math.cos(math.radians(lat)), 0.01)
+    return BBox(lon - d_lon, lat - d_lat, lon + d_lon, lat + d_lat)
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -109,8 +120,11 @@ def ring_bbox(ring: Ring) -> BBox:
     return BBox(min(lons), min(lats), max(lons), max(lats))
 
 
-def close_ring(points: Sequence[tuple[float, float]]) -> Ring | None:
-    """The points as a ring when they have at least 4 and already end where they start."""
+def as_closed_ring(points: Sequence[tuple[float, float]]) -> Ring | None:
+    """The points as a ring if there are at least 4 and the last equals the first, else None.
+
+    It never closes an open line.
+    """
     if len(points) < MIN_RING_POINTS or points[0] != points[-1]:
         return None
     return tuple(points)

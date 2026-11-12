@@ -3,8 +3,14 @@ import math
 import pytest
 
 from refinery_watch.flare.footprints import Footprint
-from refinery_watch.flare.geometry import EARTH_RADIUS_M, BBox, Ring, haversine_m, ring_bbox
-from refinery_watch.flare.overpass import radius_bbox
+from refinery_watch.flare.geometry import (
+    EARTH_RADIUS_M,
+    BBox,
+    Ring,
+    haversine_m,
+    radius_bbox,
+    ring_bbox,
+)
 
 LAT = 29.7
 LON = -95.0

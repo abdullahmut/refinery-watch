@@ -449,31 +449,34 @@ EVIDENCE_FUNCTIONS = [
     """
     CREATE FUNCTION flare_evidence_as_of(p_refinery_id text, p_day date, as_of timestamptz)
     RETURNS TABLE (kind text, ref_id bigint, item_date date, event_type text, unit_label text,
-                   confidence text)
+                   confidence text, whole_plant boolean)
     LANGUAGE sql STABLE AS $$
       WITH eff AS (
         SELECT c.outage_event_id, c.effective FROM outage_confidence_as_of(as_of) c
       ), items AS (
         SELECT 'outage_near'::text AS kind, o.id AS ref_id, o.start_date AS item_date,
-               o.event_type, o.unit_label, e.effective AS confidence
+               o.event_type, o.unit_label, e.effective AS confidence,
+               o.whole_plant
         FROM outage_current_as_of(as_of) o JOIN eff e ON e.outage_event_id = o.id
         WHERE o.refinery_id = p_refinery_id
           AND o.start_date BETWEEN p_day - 3 AND p_day + 3
         UNION ALL
-        SELECT 'outage_open', o.id, o.start_date, o.event_type, o.unit_label, e.effective
+        SELECT 'outage_open', o.id, o.start_date, o.event_type, o.unit_label, e.effective,
+               o.whole_plant
         FROM outage_as_of(as_of) o JOIN eff e ON e.outage_event_id = o.id
         WHERE o.refinery_id = p_refinery_id
           AND o.start_date NOT BETWEEN p_day - 3 AND p_day + 3
         UNION ALL
         SELECT 'regulator_near', t.id,
                (coalesce(t.started_at, t.known_at) AT TIME ZONE 'UTC')::date,
-               t.event_kind, t.units_text, NULL::text
+               t.event_kind, t.units_text, NULL::text, false
         FROM tceq_event t
         WHERE t.refinery_id = p_refinery_id AND t.known_at <= as_of
           AND (coalesce(t.started_at, t.known_at) AT TIME ZONE 'UTC')::date
               BETWEEN p_day - 3 AND p_day + 3
       )
-      SELECT i.kind, i.ref_id, i.item_date, i.event_type, i.unit_label, i.confidence
+      SELECT i.kind, i.ref_id, i.item_date, i.event_type, i.unit_label, i.confidence,
+             i.whole_plant
       FROM items i
       ORDER BY CASE i.kind WHEN 'outage_near' THEN 1 WHEN 'outage_open' THEN 2 ELSE 3 END,
                i.item_date, i.ref_id

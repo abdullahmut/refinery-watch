@@ -24,6 +24,7 @@ class Evidence:
     event_type: str | None
     unit_label: str | None
     confidence: str | None
+    whole_plant: bool = False
 
 
 def confidence_as_of(conn: Conn, as_of: datetime) -> list[EffectiveConfidence]:
@@ -46,7 +47,7 @@ def evidence_as_of(conn: Conn, refinery_id: str, day: date, as_of: datetime) -> 
     """News, open-outage and regulator items for a plant around `day`, known by `as_of`."""
     require_aware(as_of, "as_of")
     rows = conn.execute(
-        "SELECT kind, ref_id, item_date, event_type, unit_label, confidence"
+        "SELECT kind, ref_id, item_date, event_type, unit_label, confidence, whole_plant"
         " FROM flare_evidence_as_of(%s, %s, %s)",
         (refinery_id, day, as_of),
     ).fetchall()
@@ -58,6 +59,7 @@ def evidence_as_of(conn: Conn, refinery_id: str, day: date, as_of: datetime) -> 
             r["event_type"],
             r["unit_label"],
             r["confidence"],
+            bool(r["whole_plant"]),
         )
         for r in rows
     ]

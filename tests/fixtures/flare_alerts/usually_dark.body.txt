@@ -2,7 +2,7 @@ Testville Refinery, United States, US Gulf.
 
 Satellite detections on 2026-11-12 (UTC day): 5, total fire radiative power 120.5 MW.
 
-Its 90-day median is 0.0 MW over 90 scored days. It usually shows no detections. Score 7.12, alert threshold 6.00 (default).
+Its 90-day median is 0.0 MW over 90 scored days. It usually shows no detections. Score 9.60, alert threshold 6.00 (default).
 
 Footprint: OpenStreetMap outline.
 

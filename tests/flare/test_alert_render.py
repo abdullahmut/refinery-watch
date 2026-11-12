@@ -22,8 +22,8 @@ BASE = AlertCandidate(
     n_detections=5,
     frp_sum_mw=Decimal("120.5"),
     median_frp_mw=Decimal("3.2"),
-    ratio=Decimal("38.4"),
-    z=Decimal("6.84"),
+    ratio=Decimal("28.9"),
+    z=Decimal("6.72"),
     baseline_days=88,
     z_min=Decimal("6.00"),
     threshold_method="default",
@@ -39,13 +39,15 @@ FOURTH = Evidence("regulator_near", 10, date(2026, 11, 12), "Upset", None, None)
 CASES = {
     "ratio_shown": BASE,
     "usually_dark": replace(
-        BASE, median_frp_mw=Decimal("0.0"), ratio=None, z=Decimal("7.12"), baseline_days=90
+        BASE, median_frp_mw=Decimal("0.0"), ratio=None, z=Decimal("9.60"), baseline_days=90
+    ),
+    "under_one_megawatt": replace(
+        BASE, median_frp_mw=Decimal("0.6"), ratio=None, z=Decimal("9.50")
     ),
     "approximate_circle": replace(
         BASE, footprint_kind="point_radius", radius_m=2500, threshold_method="calibrated"
     ),
     "evidence_two_items": replace(BASE, evidence=(NEWS, REGULATOR)),
-    "evidence_none": BASE,
     "bounds": replace(BASE, footprint_kind="osm_bounds"),
 }
 
@@ -112,9 +114,40 @@ def test_a_regulator_item_has_no_confidence_to_state() -> None:
     assert "Regulator record: Emissions event at flare, start 2026-11-12, confidence n/a." in text
 
 
-def test_an_outage_without_a_unit_label_reads_as_whole_plant() -> None:
-    _, text, _ = render(replace(BASE, evidence=(OPEN,)), NOW)
+def test_an_outage_flagged_whole_plant_reads_as_whole_plant() -> None:
+    whole = replace(OPEN, whole_plant=True)
+    _, text, _ = render(replace(BASE, evidence=(whole,)), NOW)
     assert "Open outage: planned at whole plant, start 2026-10-02, confidence low." in text
+
+
+def test_an_outage_with_no_unit_label_and_no_flag_reads_as_unit_not_stated() -> None:
+    _, text, _ = render(replace(BASE, evidence=(OPEN,)), NOW)
+    assert "Open outage: planned at unit not stated, start 2026-10-02, confidence low." in text
+
+
+def test_item_text_is_cleaned_to_one_short_line() -> None:
+    hostile = replace(
+        NEWS,
+        unit_label="CDU\r\n\u202eevil\x00" + "x" * 200,
+        event_type="un\u2066planned\n",
+    )
+    _, text, page = render(replace(BASE, evidence=(hostile,)), NOW)
+    line = next(ln for ln in text.splitlines() if ln.startswith("Outage near the date"))
+    both = text + page
+    assert "\u202e" not in both
+    assert "\u2066" not in both
+    assert "\x00" not in both
+    assert "unplanned at CDU evilxxx" in line
+    unit = line.split(" at ", 1)[1].split(", start", 1)[0]
+    assert len(unit) == 80
+
+
+def test_a_median_of_zero_says_no_detections_and_a_small_one_does_not() -> None:
+    dark = render(CASES["usually_dark"], NOW)[1]
+    small = render(CASES["under_one_megawatt"], NOW)[1]
+    assert "It usually shows no detections." in dark
+    assert "Its normal is under 1 MW a day." in small
+    assert "usually shows no detections" not in small
 
 
 def test_none_found_names_the_dubai_time() -> None:

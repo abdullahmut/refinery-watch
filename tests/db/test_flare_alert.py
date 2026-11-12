@@ -1,3 +1,4 @@
+import logging
 import math
 import threading
 from collections.abc import Iterator
@@ -14,7 +15,8 @@ from tests.mail.fake_resend import FakeMailer, failed
 from refinery_watch.db.connect import Conn
 from refinery_watch.flare.alert import (
     AlertSettings,
-    RecipientsChanged,
+    RecipientsChangedError,
+    _claim,
     candidates,
     claim,
     deliver,
@@ -415,7 +417,7 @@ def test_a_changed_recipient_list_refuses_a_retry(db2: Db) -> None:
     mailer = FakeMailer([failed()])
     run_alerts(db2.app, mailer, SETTINGS, now())
     (alert_id,) = pending_retries(db2.app, now())
-    with pytest.raises(RecipientsChanged):
+    with pytest.raises(RecipientsChangedError):
         deliver(db2.app, alert_id, mailer, OTHER)
     assert run_alerts(db2.app, mailer, OTHER, now()) == [("R9001", "send_failed")]
     assert len(mailer.sent) == 1
@@ -428,7 +430,7 @@ def test_a_changed_sender_also_refuses(db2: Db) -> None:
     run_alerts(db2.app, mailer, SETTINGS, now())
     (alert_id,) = pending_retries(db2.app, now())
     moved = AlertSettings("Other <o@example.com>", SETTINGS.recipients, 10)
-    with pytest.raises(RecipientsChanged):
+    with pytest.raises(RecipientsChangedError):
         deliver(db2.app, alert_id, mailer, moved)
 
 
@@ -507,3 +509,153 @@ def test_the_database_error_for_a_stale_day_is_not_a_crash(db2: Db) -> None:
     email = Email(SETTINGS.sender, SETTINGS.recipients, subject, page, text)
     assert claim(db2.app, c, email, now(), 10) is None
     assert table_count(db2.app, "flare_alert") == 0
+
+
+def _unsourced_outage(db: Db, **over: object) -> None:
+    fields: dict[str, object] = {
+        "start_date": TODAY,
+        "known_at": datetime.now(UTC) - timedelta(days=1),
+        "refinery_unit_id": None,
+        "whole_plant": False,
+        "unit_label": None,
+        "capacity_basis": "not_stated",
+        "capacity_affected_kbd": None,
+        "confidence": "low",
+    }
+    fields.update(over)
+    event = insert_raw_outage(db.owner, **fields)
+    db.owner.execute(
+        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence)"
+        " VALUES (%s, %s, 'primary', 'other_media', 'text')",
+        (event, add_document(db.owner, 9001)),
+    )
+    db.owner.commit()
+
+
+def test_an_outage_with_no_unit_named_is_not_called_whole_plant(db2: Db) -> None:
+    commit_hot(db2)
+    _unsourced_outage(db2)
+    (c,) = candidates(db2.app, now())
+    _, text, _ = render(c, now())
+    assert "Outage near the date: unplanned at unit not stated," in text
+    assert "whole plant" not in text
+
+
+def test_a_whole_plant_outage_is_called_whole_plant(db2: Db) -> None:
+    commit_hot(db2)
+    _unsourced_outage(
+        db2, whole_plant=True, capacity_basis="plant_nameplate", capacity_affected_kbd=200
+    )
+    (c,) = candidates(db2.app, now())
+    assert c.evidence[0].whole_plant is True
+    _, text, _ = render(c, now())
+    assert "unplanned at whole plant," in text
+
+
+def test_a_median_between_half_and_one_megawatt_has_no_ratio(db2: Db) -> None:
+    commit_hot(db2, baseline_median=math.log(1.7))
+    (c,) = candidates(db2.app, now())
+    assert (c.median_frp_mw, c.ratio) == (Decimal("0.7"), None)
+    _, text, _ = render(c, now())
+    assert "Its normal is under 1 MW a day." in text
+    assert "usually shows no detections" not in text
+
+
+def test_two_days_ago_is_not_a_candidate(db2: Db) -> None:
+    hot_day(db2.owner, day=TODAY - timedelta(days=2))
+    db2.owner.commit()
+    assert candidates(db2.app, now()) == []
+
+
+def _mail(c: object) -> Email:
+    subject, text, page = render(c, now())  # type: ignore[arg-type]
+    return Email(SETTINGS.sender, SETTINGS.recipients, subject, page, text)
+
+
+def test_a_plant_alerted_today_for_yesterday_is_not_a_candidate_for_today(db2: Db) -> None:
+    fp = add_footprint(db2.owner)
+    hot_day(db2.owner, day=TODAY - timedelta(days=1), footprint=fp)
+    db2.owner.commit()
+    (c,) = candidates(db2.app, now())
+    assert claim(db2.app, c, _mail(c), now(), 10) is not None
+    db2.app.commit()
+    hot_day(db2.owner, day=TODAY, footprint=fp)
+    db2.owner.commit()
+    assert candidates(db2.app, now()) == []
+
+
+def test_the_daily_cap_holds_for_two_plants_claimed_at_once(
+    db2: Db, seeded_schema: str, app_url: str
+) -> None:
+    hot_day(db2.owner, "R9001")
+    hot_day(db2.owner, "R9003")
+    db2.owner.commit()
+    found = {c.refinery_id: c for c in candidates(db2.app, now())}
+    db2.app.rollback()
+    other = open_in_schema(app_url, seeded_schema)
+    try:
+        db2.app.execute("SELECT 1")  # an open transaction keeps the claim lock until commit
+        first = claim(db2.app, found["R9001"], _mail(found["R9001"]), now(), 1)
+        result: list[int | None] = []
+        worker = threading.Thread(
+            target=lambda: result.append(
+                claim(other, found["R9003"], _mail(found["R9003"]), now(), 1)
+            )
+        )
+        worker.start()
+        worker.join(1.0)
+        db2.app.commit()
+        worker.join(10.0)
+        other.commit()
+        assert first is not None
+        assert result == [None]
+    finally:
+        other.close()
+
+
+def test_deliver_after_three_attempts_sends_nothing(db2: Db) -> None:
+    commit_hot(db2)
+    mailer = FakeMailer([failed()])
+    for _ in range(3):
+        run_alerts(db2.app, mailer, SETTINGS, now())
+    row = db2.app.execute("SELECT id FROM flare_alert").fetchone()
+    assert row is not None
+    db2.app.commit()
+    assert deliver(db2.app, row["id"], mailer, SETTINGS) == "send_failed"
+    assert len(mailer.sent) == 3
+
+
+def test_a_stale_day_at_claim_time_has_its_own_outcome(db2: Db) -> None:
+    fp = add_footprint(db2.owner)
+    first = hot_day(db2.owner, footprint=fp)
+    db2.owner.commit()
+    (c,) = candidates(db2.app, now())
+    db2.app.rollback()
+    add_day(
+        db2.owner,
+        fp,
+        TODAY,
+        supersedes=first,
+        n_detections=4,
+        frp_sum_mw=120,
+        x=math.log(121),
+        baseline_median=math.log(4),
+        baseline_mad=0.3,
+        z=8.0,
+    )
+    db2.owner.commit()
+    assert _claim(db2.app, c, _mail(c), now(), 10) == "stale_day"
+
+
+def test_a_refused_retry_is_logged_with_the_alert_id(
+    db2: Db, caplog: pytest.LogCaptureFixture
+) -> None:
+    commit_hot(db2)
+    mailer = FakeMailer([failed()])
+    run_alerts(db2.app, mailer, SETTINGS, now())
+    (alert_id,) = pending_retries(db2.app, now())
+    caplog.set_level(logging.WARNING, logger="refinery_watch.flare")
+    run_alerts(db2.app, mailer, OTHER, now())
+    assert f"alert {alert_id}" in caplog.text
+    assert "recipients changed" in caplog.text
+    assert "three@example.com" not in caplog.text

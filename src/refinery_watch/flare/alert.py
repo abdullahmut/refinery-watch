@@ -1,12 +1,15 @@
 """Same-day flaring alerts: candidates, a rendered payload, a claim row, then delivery."""
 
 import html
+import logging
 import re
+import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Final, Literal
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -21,7 +24,8 @@ CLAIM_LOCK: Final = 7746021
 MAX_ITEMS: Final = 3
 MAX_ATTEMPTS: Final = 3
 RETRY_WINDOW: Final = timedelta(hours=18)
-DUBAI: Final = timezone(timedelta(hours=4), "Asia/Dubai")
+DUBAI: Final = ZoneInfo("Asia/Dubai")
+ITEM_CHARS: Final = 80
 FOOTER: Final = (
     "Signal only. Not a confirmed outage and not capacity. Cloud, satellite timing and small"
     " flares can hide flaring. Nearby fires can look like it. Times are Asia/Dubai."
@@ -32,9 +36,10 @@ KIND_LABELS: Final = {
     "outage_open": "Open outage",
     "regulator_near": "Regulator record",
 }
-_LINE_BREAKS: Final = re.compile(r"[\r\n]+")
+_LINE_BREAKS: Final = re.compile(r"\s+")
+log = logging.getLogger("refinery_watch.flare")
 
-AlertOutcome = Literal["sent", "send_failed", "capped", "already_claimed", "dry_run"]
+AlertOutcome = Literal["sent", "send_failed", "capped", "already_claimed", "stale_day", "dry_run"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +72,7 @@ class AlertSettings:
     daily_max: int
 
 
-class RecipientsChanged(RuntimeError):  # noqa: N818
+class RecipientsChangedError(RuntimeError):
     """The stored alert was built for another sender or recipient list."""
 
 
@@ -134,12 +139,19 @@ def _footprint_line(c: AlertCandidate) -> str:
     return f"Footprint: approximate, a {c.radius_m} m circle round a point."
 
 
+def _item_text(text: str | None) -> str:
+    """One line, no control or bidi characters, at most ITEM_CHARS long."""
+    spaced = _LINE_BREAKS.sub(" ", text or "")
+    kept = "".join(ch for ch in spaced if unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Co"))
+    return kept.strip()[:ITEM_CHARS].strip()
+
+
 def _item_line(item: Evidence) -> str:
-    regulator = item.kind == "regulator_near"
-    unit = item.unit_label or ("unit not stated" if regulator else "whole plant")
+    named = _item_text(item.unit_label)
+    unit = named or ("whole plant" if item.whole_plant else "unit not stated")
     confidence = item.confidence or "n/a"
     return (
-        f"{KIND_LABELS[item.kind]}: {item.event_type or 'event'} at {unit},"
+        f"{KIND_LABELS[item.kind]}: {_item_text(item.event_type) or 'event'} at {unit},"
         f" start {item.item_date:%Y-%m-%d}, confidence {confidence}."
     )
 
@@ -153,11 +165,12 @@ def _evidence_lines(c: AlertCandidate, now: datetime) -> list[str]:
 
 def _normal_sentence(c: AlertCandidate) -> str:
     median = f"Its 90-day median is {c.median_frp_mw} MW over {c.baseline_days} scored days."
-    usual = (
-        "It usually shows no detections."
-        if c.ratio is None
-        else f"That is about {c.ratio} times normal."
-    )
+    if c.ratio is not None:
+        usual = f"That is about {c.ratio} times normal."
+    elif c.median_frp_mw == 0:
+        usual = "It usually shows no detections."
+    else:
+        usual = "Its normal is under 1 MW a day."
     score = f"Score {c.z}, alert threshold {c.z_min} ({c.threshold_method})."
     return f"{median} {usual} {score}"
 
@@ -212,7 +225,7 @@ def _figures(c: AlertCandidate) -> dict[str, str | int | None]:
     }
 
 
-Claimed = int | Literal["capped", "already_claimed"]
+Claimed = int | Literal["capped", "already_claimed", "stale_day"]
 
 
 def _claim(conn: Conn, c: AlertCandidate, email: Email, now: datetime, daily_max: int) -> Claimed:
@@ -247,7 +260,7 @@ def _claim(conn: Conn, c: AlertCandidate, email: Email, now: datetime, daily_max
         return "already_claimed"
     except psycopg.Error as exc:
         if exc.sqlstate == "RW024":
-            return "already_claimed"
+            return "stale_day"
         raise
     if row is None:
         raise RuntimeError("insert returned no row")
@@ -298,7 +311,7 @@ def deliver(conn: Conn, alert_id: int, mailer: Mailer, settings: AlertSettings) 
         alert["body_text"],
     )
     if fingerprint(email) != alert["send_fingerprint"]:
-        raise RecipientsChanged(f"flare_alert {alert_id} was built for another recipient list")
+        raise RecipientsChangedError(f"flare_alert {alert_id} was built for another recipient list")
     if alert["too_old"] or int(alert["attempts"]) >= MAX_ATTEMPTS:
         return "send_failed"
     result = mailer.send(email, alert["idempotency_key"])
@@ -330,7 +343,8 @@ def _deliver_safely(
 ) -> AlertOutcome:
     try:
         return deliver(conn, alert_id, mailer, settings)
-    except RecipientsChanged:
+    except RecipientsChangedError:
+        log.warning("alert %d not sent: recipients changed since it was built", alert_id)
         return "send_failed"
 
 

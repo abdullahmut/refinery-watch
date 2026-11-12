@@ -19,7 +19,7 @@ Built:
 - Postgres schema and migrations, with the append-only outage store and `outage_as_of`.
 - Seed loaders for sources and refineries.
 - Source adapters: Hydrocarbon Processing RSS, GDELT DOC, EIA weekly utilisation. As seeded, only
-  the HP and EIA jobs run. GDELT, FIRMS and Overpass stay off until their robots status is checked
+  the HP and EIA jobs are cleared to run. GDELT, FIRMS and Overpass stay off until their robots status is checked
   by hand and set to a clear allow.
 - The keyword pre-filter and refinery name matching.
 - The flare signal, tested on synthetic data and hand-made fixtures. Flare alert sending through
@@ -38,7 +38,7 @@ Specified, not built:
 
 DigitalOcean, London region, one VPC. Cloud firewalls allow SSH on a non-default port from listed
 addresses and 443 on app only. On data, port 5432 is open only to the app and ingest Droplet
-tags. Nothing else is open on data, and port 9000 is closed.
+tags. Nothing else is open on data, and port 9000 is closed (infra/terraform c900c59; still open on this branch's base).
 
 | Droplet | RAM | Role | Runs |
 | --- | --- | --- | --- |
@@ -84,8 +84,8 @@ No object store container runs on any Droplet.
 | Where | Container | Limit |
 | --- | --- | --- |
 | data | postgres | 384 MB |
-| ingest | one job at a time, flare fetch | 192 MB, specified (record 031), not set in Compose |
-| app | flare alert job | 128 MB, specified (record 031), not set in Compose |
+| ingest | one job at a time, flare fetch | 192 MB, specified, not set in Compose |
+| app | flare alert job | 128 MB, specified, not set in Compose |
 
 Postgres is tuned to fit its limit: `shared_buffers` 96 MB, `max_connections` 20, no parallel
 workers. About 640 MB of the data Droplet is left for the OS and Docker. Limits for the other
@@ -94,9 +94,9 @@ stack is written.
 
 ## Data flow
 
-Steps 1 to 4 are built, and the HP and EIA jobs run as seeded. Steps 5 to 10 are specified.
+Steps 1 to 4 are built, and the HP and EIA jobs are cleared to run as seeded. Steps 5 to 10 are specified.
 
-1. Fetch from public news and regulator feeds. Respect robots.txt and rate limits, send a plain
+1. Fetch from public news feeds; regulator feeds are not built. Respect robots.txt and rate limits, send a plain
    User-Agent with a contact email, back off on 429 and 5xx, never evade a block. A source row with
    a robots status that is not a clear allow is refused.
 2. Hash normalised text with SHA-256. Never process the same hash twice.

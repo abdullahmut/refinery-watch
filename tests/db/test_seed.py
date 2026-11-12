@@ -117,7 +117,7 @@ def test_sources_multiline_cell_keeps_line_numbers(fresh_db: Conn, tmp_path: Pat
 
 
 def test_real_source_list_loads(fresh_db: Conn) -> None:
-    assert load_sources(fresh_db, ROOT / "data" / "sources.csv").inserted == 21
+    assert load_sources(fresh_db, ROOT / "data" / "sources.csv").inserted == 22
 
 
 def schema_connector(url: str, schema: str) -> Callable[[str], Conn]:

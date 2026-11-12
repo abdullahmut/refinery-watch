@@ -20,3 +20,4 @@ reliance_media,Reliance Industries media,2,India,html,https://www.ril.com/news-m
 ppac,Petroleum Planning and Analysis Cell (India),1,India,pdf_monthly,https://ppac.gov.in/,n/a,unchecked,43200,"Monthly refinery throughput tables. Backfill and cross-check only.",no
 houston_chron_energy,Houston Chronicle energy,3,US Gulf,html,https://www.houstonchronicle.com/business/energy/,unknown,unchecked,240,"Early local reporting on Gulf Coast upsets. Paywall after a few articles.",no
 pa_news,Port Arthur News,3,US Gulf,html,https://www.panews.com/,unknown,unchecked,240,"Hyper-local, often first on Port Arthur and Beaumont incidents.",no
+gdelt_doc,GDELT DOC 2.0 ArtList (English),3,Global,api,https://api.gdeltproject.org/api/v2/doc/doc,n/a,unchecked,60,"Leads only. Article page fetched and stored. Publication time from the page. Check api.gdeltproject.org/robots.txt before clearing.",no

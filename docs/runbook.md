@@ -344,24 +344,31 @@ docker compose -p refinery-watch-local --env-file .env -f infra/compose/data/com
 
 The output shows one row with `1`.
 
-## Create the R2 buckets and token
+## Create the R2 buckets and tokens
 
 Symptom: raw documents or backups fail to upload, or the object store has never been set up.
 
-Likely cause: first setup, a deleted bucket, or an expired or over-scoped token.
+Likely cause: first setup, a deleted bucket, or an expired token.
 
 In the Cloudflare dashboard, open R2 and create two buckets: `refinery-watch-raw` and
 `refinery-watch-backup`. Keep both private. Do not enable public access.
 
-Create two R2 API tokens under R2, Manage API tokens. Do not choose Admin or an account-wide scope.
+Create three R2 API tokens under R2, Manage API tokens. Do not choose Admin or an account-wide scope.
 
-- Raw token: Object Read & Write on `refinery-watch-raw` only. It lives on the ingest and app
-  Droplets.
+- Ingest raw token: Object Read & Write on `refinery-watch-raw` only. It lives on the ingest
+  Droplet.
+- App raw token: Object Read on `refinery-watch-raw` only. It lives on the app Droplet. It uses the
+  same `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` names, with its own value.
 - Backup token: Object Read & Write on `refinery-watch-backup` only. It lives on the data Droplet
-  only. R2 has no object lock, so write access is also delete access. Keeping it off the other
-  boxes means a break-in there cannot erase the backups.
+  only, in `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`. R2 has no object
+  lock, so write access is also delete access. A break-in on the data Droplet can erase the
+  backups. Keeping the token off ingest and app means a break-in there cannot.
 
-Set a 90-day TTL on both. An expired backup token stops backups silently unless the backup
+Add a lifecycle rule on `refinery-watch-backup` under Settings, Object lifecycle rules. Delete
+objects under `daily/` after 14 days. Delete objects under `monthly/` after 400 days, about 13
+months. This matches record 033.
+
+Set a 90-day TTL on all three. An expired backup token stops backups silently unless the backup
 heartbeat alerts, so rotate before expiry. Copy each access key ID and secret once, straight into
 `.env`. The secret is not shown again.
 

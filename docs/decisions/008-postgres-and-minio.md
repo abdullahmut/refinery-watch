@@ -2,7 +2,8 @@
 
 Date: 2026-11-11
 
-Status: amended 2026-11-12. Postgres stands. The object store is Cloudflare R2; see [029](029-cloudflare-r2-object-store.md).
+Status: partly replaced by 029 on 2026-11-12. Postgres stands. See
+[029](029-cloudflare-r2-object-store.md).
 
 ## Context
 

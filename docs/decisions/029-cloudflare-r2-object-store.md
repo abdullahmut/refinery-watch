@@ -12,8 +12,8 @@ data Droplet can give.
 
 ## Options
 
-- Cloudflare R2. S3 API, no egress fee, off DigitalOcean. The cost is one more account and one
-  more token.
+- Cloudflare R2. S3 API, no egress fee, off DigitalOcean. The cost is one more account and
+  three tokens to manage.
 - DigitalOcean Spaces. S3 API, off the box. The cost is a flat monthly fee, and the copy sits in
   the same account as the Droplets, so one leaked token reaches both.
 - Garage on the data Droplet. Small and has an official image. The cost is 320 MB of a 1 GB box,
@@ -23,22 +23,33 @@ data Droplet can give.
 
 ## Decision
 
-R2, for raw documents and for backups, with backups in a separate bucket. Code uses the S3 API and
-reads `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_REGION` (`auto`), `OBJECT_STORE_BUCKET_RAW`,
-`OBJECT_STORE_BUCKET_BACKUP`, `OBJECT_STORE_ACCESS_KEY`, `OBJECT_STORE_SECRET_KEY`,
-`OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`. Tests mock S3. No object
-store container runs on the data Droplet, so the 320 MB that 008 held is released.
+R2, for raw documents and for backups, with backups in a separate bucket. One endpoint serves both
+buckets. Code uses the S3 API and reads `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_REGION` (`auto`),
+`OBJECT_STORE_BUCKET_RAW`, `OBJECT_STORE_BUCKET_BACKUP`, `OBJECT_STORE_ACCESS_KEY`,
+`OBJECT_STORE_SECRET_KEY`, `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`.
+Tests mock S3. No object store container runs on the data Droplet, so the 320 MB that 008 held is
+released.
 
-There are two tokens:
+Raw documents go in the bucket named by `OBJECT_STORE_BUCKET_RAW`, at
+`raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`. The prefix is kept so one bucket could hold more than
+one kind.
 
-- The raw-bucket token has Object Read & Write on the raw bucket only. It lives on ingest and app.
-- The backup token is scoped to the backup bucket only. It lives on the data Droplet only. R2 has no
-  object lock, so write access is also delete access. A break-in on ingest or app cannot reach the
-  backups.
+There are three tokens, each scoped to one bucket:
+
+- Ingest holds the raw token, Object Read & Write on the raw bucket.
+- App holds a read-only raw token, Object Read on the raw bucket. It uses the same
+  `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` names, with a different value per Droplet.
+- The data Droplet holds only the backup token, Object Read & Write on the backup bucket, in
+  `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`.
+
+R2 has no object lock, so write access is also delete access. A break-in on the data Droplet can
+delete every backup. A break-in on ingest or app cannot reach the backups. This replaces the
+write-only backup key in record 033.
 
 ## Consequences
 
-Raw documents and backups leave DigitalOcean over TLS. Reads cost no egress fee. The backup copy
-is off the box and outside the DigitalOcean account. We add one account and one token to guard.
+Raw documents and backups leave DigitalOcean over TLS. R2 bills per GB stored and per operation,
+with no egress fee. The backup copy is off the box and outside the DigitalOcean account. We add one
+account and three tokens to rotate.
 
 To undo: copy the buckets to any S3 store and change the endpoint and keys. No code changes.

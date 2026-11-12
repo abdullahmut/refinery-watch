@@ -56,7 +56,8 @@ Raw documents go to `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.html`.
 - Whether the spend cap day runs on UTC or Asia/Dubai: undecided.
 - What the 06:00 note does if the cap is already spent: undecided.
 - Which service sends the note: undecided.
-- Memory limits on the data Droplet: Postgres 384 MB. No object store runs there; see  [029](decisions/029-cloudflare-r2-object-store.md). Limits on app and ingest: undecided.
+- Memory limits on the data Droplet: Postgres 384 MB. No object store runs there; see
+  [029](decisions/029-cloudflare-r2-object-store.md). Limits on app and ingest: undecided.
 - How deploys reach the VMs: undecided.
 - Where the second backup copy lives: undecided. It must be off the data Droplet to survive losing
   it.

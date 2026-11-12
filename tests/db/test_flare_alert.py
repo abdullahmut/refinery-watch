@@ -685,3 +685,28 @@ def test_a_median_shown_as_one_megawatt_is_not_called_under_one(db2: Db) -> None
     assert "median is 1.0 MW" in text
     assert "under 1 MW" not in text
     assert c.ratio is not None
+
+
+@pytest.mark.xfail(strict=True, reason="open issue: evidence names unit_code only, not unit_tag")
+def test_a_tagged_unit_without_a_label_is_named_with_its_tag(db2: Db) -> None:
+    commit_hot(db2)
+    row = db2.owner.execute(
+        "INSERT INTO refinery_unit (refinery_id, unit_code, unit_tag)"
+        " VALUES ('R9001', 'CDU', '2') RETURNING id"
+    ).fetchone()
+    assert row is not None
+    event = insert_raw_outage(
+        db2.owner,
+        start_date=TODAY,
+        known_at=datetime.now(UTC) - timedelta(days=1),
+        refinery_unit_id=row["id"],
+    )
+    db2.owner.execute(
+        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence)"
+        " VALUES (%s, %s, 'primary', 'other_media', 'text')",
+        (event, add_document(db2.owner, 9003)),
+    )
+    db2.owner.commit()
+    (c,) = candidates(db2.app, now())
+    _, text, _ = render(c, now())
+    assert "at CDU 2," in text

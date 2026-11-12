@@ -343,3 +343,57 @@ docker compose -p refinery-watch-local --env-file .env -f infra/compose/data/com
 ```
 
 The output shows one row with `1`.
+
+## Create the R2 buckets and token
+
+Symptom: raw documents or backups fail to upload, or the object store has never been set up.
+
+Likely cause: first setup, a deleted bucket, or an expired or over-scoped token.
+
+In the Cloudflare dashboard, open R2 and create two buckets: `refinery-watch-raw` and
+`refinery-watch-backup`. Keep both private. Do not enable public access.
+
+Create an R2 API token under R2, Manage API tokens. Choose the permission Object Read & Write.
+Under bucket scope, pick only those two buckets. Do not choose Admin or an account-wide scope. Set
+a TTL. Copy the access key ID and the secret once, straight into `.env`. The secret is not shown
+again.
+
+Add these five values to `.env` on the laptop and on each Droplet that needs them. Write them in an
+editor, never with `echo` or `export` on a command line:
+
+```
+OBJECT_STORE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+OBJECT_STORE_REGION=auto
+OBJECT_STORE_BUCKET_RAW=refinery-watch-raw
+OBJECT_STORE_ACCESS_KEY=<access key id>
+OBJECT_STORE_SECRET_KEY=<secret>
+```
+
+Verify with one put and one get. The shell expands the keys into a here-document that curl reads
+from stdin, so neither key appears in a command line or in the process list. Run it in a subshell
+so the values are gone afterwards:
+
+```
+(
+set -a; . ./.env; set +a
+printf 'runbook check' > /tmp/r2-check.txt
+curl -sS -f -K - -X PUT -T /tmp/r2-check.txt "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+curl -sS -f -K - "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+rm -f /tmp/r2-check.txt
+)
+```
+
+The put prints nothing and the get prints `runbook check`. A `403` means the token scope or the
+keys are wrong. A `404` on the put means the bucket name in `.env` does not match the bucket.
+Delete the `runbook/check.txt` object in the dashboard afterwards.
+
+To rotate the token, create a new one with the same scope, edit `.env`, repeat the check, then
+delete the old token in the dashboard.

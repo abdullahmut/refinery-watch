@@ -1,4 +1,6 @@
+import csv
 from collections.abc import Iterator
+from pathlib import Path
 
 import psycopg
 import pytest
@@ -166,3 +168,40 @@ def test_source_robots_status_gates_the_run(db: Conn, status: str, cleared: bool
     else:
         with pytest.raises(SourceNotCleared):
             source_row(db, "gate_src")
+
+
+SOURCES_CSV = Path(__file__).resolve().parents[2] / "data" / "sources.csv"
+
+
+def insert_real_row(db: Conn, source_id: str) -> None:
+    with SOURCES_CSV.open(encoding="utf-8", newline="") as handle:
+        row = next(r for r in csv.DictReader(handle) if r["source_id"] == source_id)
+    db.execute(
+        "INSERT INTO source (id, name, tier, region_focus, access_method, feed_url,"
+        " article_url_pattern, robots_status, fetch_interval_min)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            f"real_{source_id}",
+            row["name"],
+            int(row["tier"]),
+            row["region_focus"],
+            row["access_method"],
+            row["feed_url"],
+            row["article_url_pattern"],
+            row["robots_status"],
+            int(row["fetch_interval_min"]),
+        ),
+    )
+
+
+def test_real_gdelt_doc_row_is_refused(db: Conn) -> None:
+    insert_real_row(db, "gdelt_doc")
+    with pytest.raises(SourceNotCleared):
+        source_row(db, "real_gdelt_doc")
+
+
+@pytest.mark.parametrize("source_id", ["hp_news", "hp_refining"])
+def test_real_hp_rows_carry_ai_training_status(db: Conn, source_id: str) -> None:
+    insert_real_row(db, source_id)
+    row = source_row(db, f"real_{source_id}")
+    assert row.robots_status == "allowed_for_reference_use_ai_training_disallowed"

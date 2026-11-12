@@ -1,7 +1,8 @@
 """Row builders for the flare tables. Each insert goes through the table's insert trigger."""
 
+import math
 from collections.abc import Callable, Sequence
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -262,3 +263,23 @@ def table_count(conn: Conn, table: str) -> int:
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """For flare database tests: a real HTTP request or name lookup fails the test."""
     block_network(monkeypatch)
+
+
+def add_hot_day(conn: Conn, refinery_id: str = "R9001", day: date | None = None) -> int:
+    """A live flare_day that clears the alert threshold. Needs the plant's footprint."""
+    fp = conn.execute(
+        "SELECT id FROM plant_footprint WHERE refinery_id = %s ORDER BY id DESC", (refinery_id,)
+    ).fetchone()
+    footprint = int(fp["id"]) if fp else add_footprint(conn, refinery_id)
+    return add_day(
+        conn,
+        footprint,
+        day or datetime.now(UTC).date(),
+        refinery_id=refinery_id,
+        n_detections=3,
+        frp_sum_mw=99,
+        x=math.log(100),
+        baseline_median=math.log(4),
+        baseline_mad=0.3,
+        z=7.5,
+    )

@@ -23,10 +23,18 @@ data Droplet can give.
 
 ## Decision
 
-R2, for raw documents and for backups, with backups in a separate bucket or prefix. Code uses the
-S3 API and reads `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_REGION` (`auto`),
-`OBJECT_STORE_BUCKET_RAW`, `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY`. Tests mock S3.
-No object store container runs on the data Droplet, so the 320 MB that 008 held is released.
+R2, for raw documents and for backups, with backups in a separate bucket. Code uses the S3 API and
+reads `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_REGION` (`auto`), `OBJECT_STORE_BUCKET_RAW`,
+`OBJECT_STORE_BUCKET_BACKUP`, `OBJECT_STORE_ACCESS_KEY`, `OBJECT_STORE_SECRET_KEY`,
+`OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`. Tests mock S3. No object
+store container runs on the data Droplet, so the 320 MB that 008 held is released.
+
+There are two tokens:
+
+- The raw-bucket token has Object Read & Write on the raw bucket only. It lives on ingest and app.
+- The backup token is scoped to the backup bucket only. It lives on the data Droplet only. R2 has no
+  object lock, so write access is also delete access. A break-in on ingest or app cannot reach the
+  backups.
 
 ## Consequences
 

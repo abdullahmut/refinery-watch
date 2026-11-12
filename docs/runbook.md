@@ -353,20 +353,30 @@ Likely cause: first setup, a deleted bucket, or an expired or over-scoped token.
 In the Cloudflare dashboard, open R2 and create two buckets: `refinery-watch-raw` and
 `refinery-watch-backup`. Keep both private. Do not enable public access.
 
-Create an R2 API token under R2, Manage API tokens. Choose the permission Object Read & Write.
-Under bucket scope, pick only those two buckets. Do not choose Admin or an account-wide scope. Set
-a TTL. Copy the access key ID and the secret once, straight into `.env`. The secret is not shown
-again.
+Create two R2 API tokens under R2, Manage API tokens. Do not choose Admin or an account-wide scope.
 
-Add these five values to `.env` on the laptop and on each Droplet that needs them. Write them in an
-editor, never with `echo` or `export` on a command line:
+- Raw token: Object Read & Write on `refinery-watch-raw` only. It lives on the ingest and app
+  Droplets.
+- Backup token: Object Read & Write on `refinery-watch-backup` only. It lives on the data Droplet
+  only. R2 has no object lock, so write access is also delete access. Keeping it off the other
+  boxes means a break-in there cannot erase the backups.
+
+Set a 90-day TTL on both. An expired backup token stops backups silently unless the backup
+heartbeat alerts, so rotate before expiry. Copy each access key ID and secret once, straight into
+`.env`. The secret is not shown again.
+
+Add these values to `.env` on the laptop. On each Droplet, add only the values for the token it
+holds. Write them in an editor, never with `echo` or `export` on a command line:
 
 ```
 OBJECT_STORE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 OBJECT_STORE_REGION=auto
 OBJECT_STORE_BUCKET_RAW=refinery-watch-raw
-OBJECT_STORE_ACCESS_KEY=<access key id>
-OBJECT_STORE_SECRET_KEY=<secret>
+OBJECT_STORE_ACCESS_KEY=<raw token access key id>
+OBJECT_STORE_SECRET_KEY=<raw token secret>
+OBJECT_STORE_BUCKET_BACKUP=refinery-watch-backup
+OBJECT_STORE_BACKUP_ACCESS_KEY=<backup token access key id>
+OBJECT_STORE_BACKUP_SECRET_KEY=<backup token secret>
 ```
 
 Verify with one put and one get. The shell expands the keys into a here-document that curl reads
@@ -376,8 +386,9 @@ so the values are gone afterwards:
 ```
 (
 set -a; . ./.env; set +a
-printf 'runbook check' > /tmp/r2-check.txt
-curl -sS -f -K - -X PUT -T /tmp/r2-check.txt "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+f=$(mktemp)
+printf 'runbook check' > "$f"
+curl -sS -f -K - -X PUT -T "$f" "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
 user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
 aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
 header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
@@ -387,7 +398,7 @@ user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
 aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
 header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
 CFG
-rm -f /tmp/r2-check.txt
+rm -f "$f"
 )
 ```
 
@@ -395,5 +406,6 @@ The put prints nothing and the get prints `runbook check`. A `403` means the tok
 keys are wrong. A `404` on the put means the bucket name in `.env` does not match the bucket.
 Delete the `runbook/check.txt` object in the dashboard afterwards.
 
-To rotate the token, create a new one with the same scope, edit `.env`, repeat the check, then
-delete the old token in the dashboard.
+To rotate a token, create a new one with the same scope and TTL, edit `.env`, repeat the check, then
+delete the old token in the dashboard. The check above covers the raw token. For the backup token,
+use `OBJECT_STORE_BACKUP_*` and the backup bucket.

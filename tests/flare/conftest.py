@@ -2,6 +2,7 @@
 
 import pytest
 from tests.netguard import block_network
+from tests.sources.conftest import real_fixture as real_fixture
 
 
 @pytest.fixture(autouse=True)

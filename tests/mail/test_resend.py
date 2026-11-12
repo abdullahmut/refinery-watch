@@ -226,3 +226,15 @@ def test_a_real_transport_is_blocked_in_mail_tests() -> None:
 def test_context_manager_closes() -> None:
     with ResendClient(API_KEY, transport=FakeResend().transport()) as c:
         assert c.send(email(), "k").ok
+
+
+def test_a_retry_that_passes_the_fingerprint_check_sends_the_same_bytes() -> None:
+    first = email(to=("a@example.test", "b@example.test"))
+    later = email(to=("b@example.test", "A@example.test"))
+    assert fingerprint(first) == fingerprint(later)
+    fake = FakeResend()
+    c, _ = client(fake)
+    c.send(first, "key-1")
+    c.send(later, "key-1")
+    assert fake.requests[0].content == fake.requests[1].content
+    assert json.loads(fake.requests[0].content)["to"] == ["a@example.test", "b@example.test"]

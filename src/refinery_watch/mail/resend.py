@@ -60,7 +60,7 @@ def fingerprint(email: Email) -> str:
 def _payload(email: Email) -> bytes:
     body = {
         "from": email.sender,
-        "to": list(email.to),
+        "to": sorted(address.lower() for address in email.to),
         "subject": email.subject,
         "html": email.html,
         "text": email.text,
@@ -145,9 +145,7 @@ class ResendClient:
         backoff = BACKOFF_S[min(attempt, len(BACKOFF_S)) - 1]
         try:
             response = self._client.post(RESEND_URL, content=content, headers=headers)
-        except httpx.TimeoutException as exc:
-            return SendResult(False, None, None, type(exc).__name__, attempt), backoff
-        except httpx.TransportError as exc:
+        except httpx.TransportError as exc:  # includes timeouts
             return SendResult(False, None, None, type(exc).__name__, attempt), backoff
         status = response.status_code
         if status == 200:

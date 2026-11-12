@@ -170,11 +170,11 @@ TABLE_STATEMENTS = [
 ]
 
 # The defaults are code constants, not knowledge, so they are in force at every time.
-# They go in before the stamp trigger exists, which would replace -infinity.
+# They go in before the stamp trigger exists, which would replace their known time.
 THRESHOLD_SEED = """
 INSERT INTO flare_threshold (kind, z_min, min_detections, method, known_at)
-VALUES ('signal', 3.50, 1, 'default', '-infinity'),
-       ('alert', 6.00, 2, 'default', '-infinity')
+VALUES ('signal', 3.50, 1, 'default', '1970-01-01 00:00:00+00'),
+       ('alert', 6.00, 2, 'default', '1970-01-01 00:00:00+00')
 """
 
 TRIGGER_FUNCTIONS = [

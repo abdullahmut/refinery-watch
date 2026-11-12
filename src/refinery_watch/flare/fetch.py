@@ -1,13 +1,14 @@
 """FIRMS fetches: store each reply, then write its detections and coverage, then score."""
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Final
 
 from refinery_watch.db.connect import Conn
 from refinery_watch.flare.firms import (
+    BACKFILL_RANGE_DAYS,
     BASE,
     LIVE_RANGE_DAYS,
     SATELLITES,
@@ -19,7 +20,9 @@ from refinery_watch.flare.firms import (
     Satellite,
     area_path,
     assign,
+    availability_path,
     parse_area_csv,
+    parse_availability,
     query_boxes,
     redacted,
     safe_note,
@@ -242,4 +245,93 @@ def run_fetch(
     plans = live_plans(query_boxes(footprints), today)
     tally = run_plans(conn, fetcher, store, run_id, key, plans, footprints)
     score_touched(conn, tally, False, run_id)
+    return _outcome(tally)
+
+
+def _chunks(
+    satellite: Satellite, availability: Mapping[str, tuple[date, date]], first: date, last: date
+) -> list[tuple[Product, date, int]]:
+    """SP up to the SP last date, NRT after. A chunk never crosses that date."""
+    entry = availability.get(source_name(satellite, "SP"))
+    sp_last = entry[1] if entry else None
+    out: list[tuple[Product, date, int]] = []
+    day = first
+    while day <= last:
+        product: Product = "SP" if sp_last is not None and day <= sp_last else "NRT"
+        stop = min(last, day + timedelta(days=BACKFILL_RANGE_DAYS - 1))
+        if product == "SP" and sp_last is not None:
+            stop = min(stop, sp_last)
+        out.append((product, day, (stop - day).days + 1))
+        day = stop + timedelta(days=1)
+    return out
+
+
+def _covered(conn: Conn, plan: FetchPlan) -> bool:
+    row = conn.execute(
+        "SELECT count(*) AS n FROM (SELECT DISTINCT refinery_id, day FROM flare_coverage"
+        " WHERE refinery_id = ANY(%s) AND satellite = %s AND product = %s"
+        " AND day BETWEEN %s AND %s) t",
+        (
+            list(plan.box.refinery_ids),
+            plan.satellite,
+            plan.product,
+            plan.start,
+            plan.start + timedelta(days=plan.range_days - 1),
+        ),
+    ).fetchone()
+    return row is not None and int(row["n"]) == len(plan.box.refinery_ids) * plan.range_days
+
+
+def backfill_plans(
+    conn: Conn,
+    boxes: Sequence[QueryBox],
+    availability: Mapping[str, tuple[date, date]],
+    first: date,
+    last: date,
+) -> list[FetchPlan]:
+    """Plans oldest first. A chunk is dropped when coverage already holds all its plant-days."""
+    plans = [
+        FetchPlan(satellite, product, box, start, days)
+        for satellite in SATELLITES
+        for product, start, days in _chunks(satellite, availability, first, last)
+        for box in boxes
+    ]
+    order = {sat: i for i, sat in enumerate(SATELLITES)}
+    plans.sort(key=lambda p: (p.start, p.box.refinery_ids, order[p.satellite]))
+    return [p for p in plans if not _covered(conn, p)]
+
+
+def run_backfill(
+    conn: Conn,
+    fetcher: Fetcher,
+    store: RawStore,
+    run_id: int,
+    key: str,
+    first: date,
+    last: date,
+    max_requests: int,
+    deadline: float,
+) -> RunOutcome:
+    if first > last:
+        return RunOutcome("failed", 0, 0, "the first day is after the last day")
+    fetcher.set_deadline(deadline)
+    footprints = current_footprints(conn)
+    conn.rollback()
+    if not footprints:
+        return RunOutcome("failed", 0, 0, NO_FOOTPRINTS)
+    try:
+        reply = fetcher.get(BASE + availability_path(key), accept="text/csv")
+        availability = parse_availability(_clean_body(reply.body, key))
+    except FetchError as exc:
+        return RunOutcome("failed", 1, 0, safe_note(exc, key))
+    except FirmsResponseError as exc:
+        return RunOutcome("failed", 1, 0, redacted(f"{type(exc).__name__}: {exc}", key))
+    plans = backfill_plans(conn, query_boxes(footprints), availability, first, last)
+    conn.rollback()
+    tally = run_plans(conn, fetcher, store, run_id, key, plans[:max_requests], footprints)
+    tally.requests += 1
+    score_touched(conn, tally, True, run_id)
+    left = len(plans) - min(len(plans), max_requests)
+    if left:
+        tally.note(f"{left} requests left; run again")
     return _outcome(tally)

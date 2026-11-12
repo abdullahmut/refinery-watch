@@ -475,3 +475,123 @@ the token is read-only. On ingest and data, a `403` means the token scope or the
 To rotate a token, create a new one with the same scope and TTL, edit `.env`, repeat the check,
 then delete the old token in the dashboard. The ingest check covers the ingest raw token. The app
 check covers the app read-only token. The data check covers the backup token.
+
+## Flare signal
+
+Symptom: setting up the flare signal for the first time, or one of its jobs is failing.
+
+Likely cause: first setup, a source that robots.txt does not allow, a missing setting, or a plant
+with no footprint.
+
+The method, its limits and its status are in `docs/research/flare-lead-time.md`. The signal is a
+cross-check. It is not a confirmed outage and not capacity.
+
+### Settings
+
+The owner adds these to `.env` by hand. Values never go in a committed file.
+
+```
+# Flare signal, ingest only.
+FIRMS_MAP_KEY=
+REFINERY_LOCATIONS_CSV_PATH=
+# Flare alerts and the note, app only.
+NOTE_FROM=
+RESEND_API_KEY=
+FLARE_ALERT_DAILY_MAX=10
+```
+
+`NOTE_RECIPIENTS` is already in the template. `FLARE_ALERT_DAILY_MAX` is a whole number from 1 to
+50. The locations file has one row per plant:
+
+```
+refinery_id,lat,lon,radius_m,osm_ref,source_url,verified
+```
+
+`refinery_id` is the id from `refineries.csv`, in the form `R1234`. `radius_m` is 500 to 10000
+and blank means 2500. `osm_ref` is blank or `way/123` or
+`relation/456`. `verified` is `yes` or `no`. A bad row stops the command and names the line.
+
+### Before the first run
+
+Check both robots.txt files by eye. If either disallows `/api/`, stop. The fetcher will refuse the
+path, and we do not work round it.
+
+```
+export CONTACT_EMAIL='<your contact address>'
+UA="refinery-watch/0.1 (+mailto:$CONTACT_EMAIL)"
+for h in overpass-api.de firms.modaps.eosdis.nasa.gov; do echo "=== $h"; curl --fail --location --compressed --max-time 30 -A "$UA" "https://$h/robots.txt" | head -40; sleep 5; done
+curl --fail --max-time 30 -A "$UA" "https://overpass-api.de/api/status"
+```
+
+The status page should show a free slot. If not, wait.
+
+Request a MAP_KEY in a browser at `https://firms.modaps.eosdis.nasa.gov/api/map_key/`. The key
+arrives by email. Put it in the ingest `.env` as `FIRMS_MAP_KEY`. Never paste it into a file in the
+repo, a command line that is logged, or a chat.
+
+The two source rows, `osm_overpass` and `nasa_firms`, load with robots status `unchecked`. Both
+jobs refuse an uncleared status. After the robots check, set the status in `data/sources.csv` to
+the one that matches what you read, and load the sources again.
+
+Save one real reply of each kind so the parser tests can run on real files. Put them under
+`tests/fixtures/sources/overpass/` and `tests/fixtures/sources/firms/`. Check that the key is not in
+any saved file:
+
+```
+read -rs FIRMS_MAP_KEY
+grep -c -F -f <(printf '%s\n' "$FIRMS_MAP_KEY") tests/fixtures/sources/firms/* || true
+unset FIRMS_MAP_KEY
+```
+
+The count must be 0 for every file. Compare the real column names with the list in
+`flare/firms.py`. The parser fails on a reply that lacks them, and says so.
+
+### First load
+
+Run these in order, by hand.
+
+1. Compile `refinery_locations.csv` for the plants in `refineries.csv`. Put it where
+   `REFINERY_LOCATIONS_CSV_PATH` points on ingest.
+2. Load the two source rows with the sources seed.
+3. `python -m refinery_watch.flare footprints` on ingest. It does at most 100 plants a run, new
+   plants first. Repeat until every plant has a footprint. Count the `point_radius` rows in
+   `plant_footprint`. Those plants use a circle round the point, and every output says so.
+4. `python -m refinery_watch.flare backfill --from <today minus 455 days> --to <yesterday>`.
+   Each run takes at most 150 requests and picks up where the last one stopped. Repeat until the
+   job note stops saying requests are left. The backfill uses the FIRMS data availability list
+   first, so the key must work.
+5. `python -m refinery_watch.flare research --out docs/research/flare-lead-time-results.md`. Then
+   `calibrate --kind signal` and `calibrate --kind alert`. Read the curves. Add `--write` only if
+   you are happy with the chosen value. `calibrate` refuses with exit code 3 when there are fewer
+   than 1,000 quiet scored plant-days.
+6. `python -m refinery_watch.flare alert` on app. This is a dry run. It prints the subject and body
+   of each alert that would go out, and writes and sends nothing. Read the output.
+7. Ask platform to add the cron lines: `flare fetch` on ingest every 3 hours at minute 40 under the
+   ingest job lock, and `flare alert --send` on app every 30 minutes with its own lock and a 128 MB
+   limit.
+
+Exit codes: 0 ok, 1 failed, 2 setting or usage, 3 refused. Each job writes a `job_run` row.
+
+### When it fails
+
+- **The job says the robots status is not a clear allow.** The source row is still `unchecked`.
+  Check robots.txt by eye, then change the row. Do not edit the database by hand.
+- **`host_blocked` or a 4xx in the note.** The host refused us. The job stops for that host. Do not
+  retry in a loop. Wait, and read the host's usage page.
+- **`no footprints; run the footprints command first`.** Run step 3 above.
+- **A plant never gets a score.** A day needs both satellites fetched and 60 scored days before
+  it. Check `flare_coverage` for the plant, then run the backfill again.
+- **No alert came.** Run `alert` without `--send` and read the candidates. A plant gets one alert
+  per Dubai day, and at most `FLARE_ALERT_DAILY_MAX` go out in total. The log line for a plant
+  that was held back says `capped`.
+- **The send failed.** The job retries the stored email on each run, up to 3 attempts in 18 hours,
+  with the same key. A changed `NOTE_RECIPIENTS` or `NOTE_FROM` refuses the retry. Put the old
+  value back, or wait for the 18 hours to pass.
+- **The key may have leaked.** The key sits in the request path, so it must never be in a log, a
+  note or a stored URL. If it appears anywhere, request a new MAP_KEY and replace the old one.
+
+### Limits
+
+The fetch holds one FIRMS reply at a time, 5 MB at most, inside the 192 MB container limit specified
+for each ingest job, which is not set in Compose yet. Nothing else runs at the same time. The alert job runs on app with a
+128 MB limit. No statistics run in Python.

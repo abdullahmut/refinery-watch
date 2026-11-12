@@ -66,7 +66,7 @@ def test_main_unset_pg_host_names_variable(
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("PG_HOST", raising=False)
-    monkeypatch.delenv("PG_APP_PASSWORD", raising=False)
+    monkeypatch.delenv("PG_OWNER_PASSWORD", raising=False)
     assert migrate.main([]) == 2
     assert "PG_HOST" in capsys.readouterr().err
 

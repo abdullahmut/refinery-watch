@@ -149,7 +149,7 @@ def test_main_errors_exit_nonzero(
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("PG_HOST", raising=False)
-    monkeypatch.delenv("PG_APP_PASSWORD", raising=False)
+    monkeypatch.delenv("PG_OWNER_PASSWORD", raising=False)
     assert seed.main(["sources"]) == 2
     assert "PG_HOST" in capsys.readouterr().err
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1/none")

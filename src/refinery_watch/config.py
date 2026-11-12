@@ -18,12 +18,11 @@ def _required(name: str) -> str:
     return value
 
 
-def app_database_url() -> str:
-    """Build the app role URL from PG_* settings. DATABASE_URL is the only other source."""
+def _database_url(user_var: str, default_user: str, password_var: str) -> str:
     explicit = os.environ.get("DATABASE_URL", "")
-    password = os.environ.get("PG_APP_PASSWORD", "")
+    password = os.environ.get(password_var, "")
     if explicit and password:
-        raise ConfigError("set DATABASE_URL or PG_APP_PASSWORD, not both")
+        raise ConfigError(f"set DATABASE_URL or {password_var}, not both")
     if explicit:
         return explicit
     host = _required("PG_HOST")
@@ -33,13 +32,27 @@ def app_database_url() -> str:
     if not re.fullmatch(r"[0-9]{1,5}", port):
         raise ConfigError("PG_PORT must be a number")
     database = os.environ.get("PG_DATABASE") or "refinery_watch"
-    user = os.environ.get("PG_APP_USER") or "refinery_app"
+    user = os.environ.get(user_var) or default_user
     if not password:
-        raise ConfigError("PG_APP_PASSWORD is not set")
+        raise ConfigError(f"{password_var} is not set")
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
         f"@{host}:{port}/{quote(database, safe='')}"
     )
+
+
+def app_database_url() -> str:
+    """Build the app role URL from PG_* settings. DATABASE_URL is the only other source."""
+    return _database_url("PG_APP_USER", "refinery_app", "PG_APP_PASSWORD")
+
+
+def owner_database_url() -> str:
+    """Build the owner role URL for migrations and seeds.
+
+    PG_OWNER_PASSWORD is supplied in the environment at run time by the operator.
+    It is never stored in the app or ingest .env.
+    """
+    return _database_url("PG_OWNER_USER", "refinery_owner", "PG_OWNER_PASSWORD")
 
 
 def refineries_csv_path() -> Path:

@@ -10,6 +10,7 @@ from refinery_watch.config import (
     eia_api_key,
     fetch_ipv6,
     object_store_settings,
+    owner_database_url,
     refineries_csv_path,
 )
 
@@ -236,3 +237,43 @@ def test_fetch_ipv6_rejects_other_values(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("FETCH_IPV6", "maybe")
     with pytest.raises(ConfigError, match="FETCH_IPV6"):
         fetch_ipv6()
+
+
+def test_owner_url_built_with_defaults(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "10.0.0.5")
+    pg_env.setenv("PG_OWNER_PASSWORD", "o@pw")
+    pg_env.setenv("PG_APP_PASSWORD", "app-pw")
+    assert owner_database_url() == "postgresql://refinery_owner:o%40pw@10.0.0.5:5432/refinery_watch"
+
+
+def test_owner_url_override_user(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_PORT", "5434")
+    pg_env.setenv("PG_OWNER_USER", "boss")
+    pg_env.setenv("PG_OWNER_PASSWORD", "pw")
+    assert owner_database_url() == "postgresql://boss:pw@h:5434/refinery_watch"
+
+
+def test_owner_url_missing_password_names_variable(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "app-pw")
+    with pytest.raises(ConfigError, match="PG_OWNER_PASSWORD") as info:
+        owner_database_url()
+    assert "app-pw" not in str(info.value)
+
+
+def test_owner_url_both_set_raises(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_OWNER_PASSWORD", "secret-pw")
+    with pytest.raises(ConfigError, match="not both") as info:
+        owner_database_url()
+    assert "secret-pw" not in str(info.value)
+
+
+def test_migrate_and_seed_never_use_app_url() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "refinery_watch" / "db"
+    for name in ("migrate.py", "seed.py"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "app_database_url" not in text
+        assert "owner_database_url" in text

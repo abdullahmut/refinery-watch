@@ -21,7 +21,7 @@ It does not replace a commercial outage service. Its limits:
 - An append-only outage store in Postgres, with `outage_as_of(T)` queries.
 - Source adapters for the Hydrocarbon Processing RSS feeds, GDELT DOC and EIA weekly refinery
   utilisation. Each fetch checks robots.txt and a per-source status gate before it runs. As seeded,
-  only the HP and EIA jobs run. GDELT and both flare sources (FIRMS and Overpass) stay off until
+  only the HP and EIA jobs are cleared to run. GDELT and both flare sources (FIRMS and Overpass) stay off until
   their robots status is checked by hand.
 - The keyword pre-filter and refinery name matching.
 - The VIIRS flare signal, on synthetic data. The fetch code is tested against hand-made fixtures.
@@ -121,13 +121,24 @@ Copy `.env.example` to `.env` before `make up`. The local stack needs `POSTGRES_
 `PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. `.env.example` is updated on infra/data-compose. The
 operator must add the `PG_*` and `OBJECT_STORE_*` keys by hand. Never commit `.env`.
 
+The data-compose `.env.example` has these keys: `DATABASE_URL`, `S3_ENDPOINT`, `S3_ACCESS_KEY`,
+`S3_SECRET_KEY`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `SENTRY_DSN`, `ALERT_EMAIL_TO`,
+`DAILY_COST_CAP_USD`, `NOTE_RECIPIENTS`, `POSTGRES_PASSWORD`, `PG_OWNER_PASSWORD`,
+`PG_APP_PASSWORD`, `DATA_BIND_ADDR`, `CONTACT_EMAIL`, `EIA_API_KEY`, `OBJECT_STORE_ENDPOINT`,
+`OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY`. Code reads none of
+`DATABASE_URL`, `S3_*` or `OBJECT_STORE_BUCKET`. The operator must still add by hand:
+`PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_APP_USER`, `OBJECT_STORE_REGION`,
+`OBJECT_STORE_BUCKET_RAW`, `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`
+(data Droplet only), `FIRMS_MAP_KEY`, `NOTE_FROM`, `FLARE_ALERT_DAILY_MAX`, `REFINERIES_CSV_PATH`,
+`REFINERY_LOCATIONS_CSV_PATH`, and `FETCH_IPV6` if wanted.
+
 Every key `config.py` reads:
 
 - Database, app role: `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_APP_USER`, `PG_APP_PASSWORD`, or
   `APP_DATABASE_URL` instead of the others.
 - Database, owner role, for migrate and seed only: `PG_OWNER_USER`, `PG_OWNER_PASSWORD`, or
-  `OWNER_DATABASE_URL`. Type these in the shell. The owner password is stored only in the data
-  Droplet's `.env`.
+  `OWNER_DATABASE_URL`. Type these in the shell. On the Droplets, the owner password is stored
+  only in the data Droplet's `.env`.
 - Objects: `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_REGION`, `OBJECT_STORE_BUCKET_RAW`,
   `OBJECT_STORE_ACCESS_KEY`, `OBJECT_STORE_SECRET_KEY`.
 - Sources: `CONTACT_EMAIL`, `EIA_API_KEY`, `FETCH_IPV6`, `FIRMS_MAP_KEY`.
@@ -154,7 +165,8 @@ Every key `config.py` reads:
 After the merges there are 10 tests marked `xfail(strict=True)`. Each states a defect that is not
 fixed yet. A strict xfail fails the run if the defect disappears, so the mark cannot go stale.
 This branch holds the last five, from feat/adapters and feat/flare-signal. The first five come
-from feat/schema.
+from feat/schema. Their descriptions below paraphrase the reasons in feat/schema's
+`tests/db/test_open_issues.py`.
 
 Schema, in `tests/db/test_open_issues.py`:
 
@@ -182,13 +194,21 @@ Flare, in `tests/db/test_flare_alert.py`:
 
 - An alert names a unit by code, not by tag.
 
+## Merge note
+
+`docs/runbook.md` conflicts with infra/data-compose's version at merge. The conflicting entries are
+the index at the top, "Provision a fresh stack", "Start Postgres on the data VM" (named "on the
+data Droplet" there), "How each job connects to Postgres", "Reset the laptop database", and the
+"Flare signal" entry, against data-compose's "Create the R2 buckets and tokens". The rotation entry
+is identical.
+
 ## Data credits
 
 - News feeds: Hydrocarbon Processing, read for reference use
   ([035](docs/decisions/035-hp-reading-is-not-ai-training.md)).
 - We acknowledge the use of data and imagery from NASA's Fire Information for Resource Management
-  System (FIRMS), part of NASA's Earth Science Data and Information System (ESDIS). VIIRS active
-  fire products from S-NPP and NOAA-20. Product DOIs to add.
+  System (FIRMS), part of NASA's Earth Science Data and Information System (ESDIS). VIIRS 375 m active
+  fire products VNP14IMGT (S-NPP) and VJ114IMGT (NOAA-20).
 - © OpenStreetMap contributors, https://www.openstreetmap.org/copyright. Data via the Overpass
   API.
 - GDELT Project, https://www.gdeltproject.org.

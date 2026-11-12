@@ -80,7 +80,7 @@ HBA_RULES: Final[dict[str, list[tuple[str, ...]]]] = {
 }
 BACKEND_OVERHEAD_MIB: Final[int] = 6
 BACKGROUND_MIB: Final[int] = 30
-TOTAL_LIMIT_MIB: Final[int] = 704
+TOTAL_LIMIT_MIB: Final[int] = 384
 LOGGING: Final[dict[str, Any]] = {
     "driver": "json-file",
     "options": {"max-size": "10m", "max-file": "3"},

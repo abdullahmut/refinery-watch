@@ -18,6 +18,7 @@ from refinery_watch.flare.geometry import (
 )
 
 SOURCE_ID: Final = "osm_overpass"
+ENDPOINT: Final = "https://overpass-api.de/api/interpreter"
 SEARCH_RADIUS_M: Final = 5_000
 OSM_REF: Final = re.compile(r"(way|relation)/([0-9]+)")
 

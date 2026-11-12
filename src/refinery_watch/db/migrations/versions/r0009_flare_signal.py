@@ -315,13 +315,110 @@ CURRENT_FUNCTIONS = [
     """,
 ]
 
+SCORE_FUNCTIONS = [
+    """
+    CREATE FUNCTION flare_day_figures(p_refinery_id text, p_day date, as_of timestamptz)
+    RETURNS TABLE (n_detections int, frp_sum_mw numeric, products text[],
+                   last_acquired_at timestamptz)
+    LANGUAGE sql STABLE AS $$
+      WITH cov AS (
+        SELECT c.satellite, bool_or(c.product = 'SP') AS has_sp
+        FROM flare_coverage c
+        WHERE c.refinery_id = p_refinery_id AND c.day = p_day AND c.known_at <= as_of
+        GROUP BY c.satellite
+      ), chosen AS (
+        SELECT satellite, CASE WHEN has_sp THEN 'SP' ELSE 'NRT' END AS product FROM cov
+      ), det AS (
+        SELECT d.frp_mw, d.acquired_at
+        FROM chosen c
+        JOIN flare_detection d
+          ON d.refinery_id = p_refinery_id AND d.satellite = c.satellite
+         AND d.product = c.product AND d.known_at <= as_of
+         AND (d.acquired_at AT TIME ZONE 'UTC')::date = p_day
+      )
+      SELECT (SELECT count(*) FROM det)::int,
+             (SELECT coalesce(sum(frp_mw), 0) FROM det),
+             (SELECT array_agg(satellite || ':' || product ORDER BY satellite) FROM chosen),
+             (SELECT max(acquired_at) FROM det)
+      WHERE (SELECT count(*) FROM chosen) = 2
+    $$
+    """,
+    """
+    CREATE FUNCTION flare_baseline(p_refinery_id text, p_day date, as_of timestamptz)
+    RETURNS TABLE (median_x double precision, mad_x double precision, n_days int)
+    LANGUAGE sql STABLE AS $$
+      WITH w AS (
+        SELECT d.x FROM flare_day_current_as_of(as_of) d
+        WHERE d.refinery_id = p_refinery_id AND d.day BETWEEN p_day - 90 AND p_day - 1
+      ), m AS (
+        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY x) AS med, count(*)::int AS n FROM w
+      )
+      SELECT m.med,
+             (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(w.x - m.med)) FROM w),
+             m.n
+      FROM m
+    $$
+    """,
+    """
+    CREATE FUNCTION flare_day_write(p_refinery_id text, p_day date, p_backfilled boolean,
+                                    p_job_run_id bigint)
+    RETURNS bigint LANGUAGE plpgsql AS $$
+    DECLARE
+      f        record;
+      b        record;
+      cur      flare_day%ROWTYPE;
+      fp       bigint;
+      xv       double precision;
+      zv       double precision;
+      avail    timestamptz;
+      new_id   bigint;
+    BEGIN
+      PERFORM pg_advisory_xact_lock(7746022);
+      SELECT * INTO f FROM flare_day_figures(p_refinery_id, p_day, clock_timestamp());
+      IF NOT FOUND THEN
+        RETURN NULL;
+      END IF;
+      SELECT * INTO cur FROM flare_day_current_as_of(clock_timestamp())
+        WHERE refinery_id = p_refinery_id AND day = p_day;
+      IF FOUND AND cur.n_detections = f.n_detections AND cur.frp_sum_mw = f.frp_sum_mw
+         AND cur.products = f.products THEN
+        RETURN NULL;
+      END IF;
+      SELECT id INTO fp FROM footprint_current_as_of(clock_timestamp())
+        WHERE refinery_id = p_refinery_id;
+      IF fp IS NULL THEN
+        RETURN NULL;
+      END IF;
+      SELECT * INTO b FROM flare_baseline(p_refinery_id, p_day, clock_timestamp());
+      xv := ln(1 + f.frp_sum_mw);
+      IF b.n_days >= 60 THEN
+        zv := (xv - b.median_x) / greatest(1.4826 * b.mad_x, 0.5);
+      END IF;
+      IF p_backfilled THEN
+        avail := least(clock_timestamp(),
+                       coalesce(f.last_acquired_at,
+                                (p_day + 1)::timestamp AT TIME ZONE 'UTC') + interval '3 hours');
+      END IF;
+      INSERT INTO flare_day (refinery_id, footprint_id, day, supersedes, n_detections,
+                             frp_sum_mw, products, x, baseline_median, baseline_mad,
+                             baseline_days, z, backfilled, available_at, job_run_id)
+      VALUES (p_refinery_id, fp, p_day, cur.id, f.n_detections, f.frp_sum_mw, f.products, xv,
+              b.median_x, b.mad_x, b.n_days, zv, p_backfilled, avail, p_job_run_id)
+      RETURNING id INTO new_id;
+      RETURN new_id;
+    END
+    $$
+    """,
+]
+
 TRIGGER_FUNCTION_NAMES = (
     "flare_stamp_known_at(), plant_footprint_before_insert(), flare_day_before_insert(),"
     " flare_alert_before_insert(), flare_alert_attempt_before_insert()"
 )
 SQL_FUNCTION_NAMES = (
     "footprint_current_as_of(timestamptz), flare_day_current_as_of(timestamptz),"
-    " flare_threshold_as_of(text, timestamptz)"
+    " flare_threshold_as_of(text, timestamptz), flare_day_figures(text, date, timestamptz),"
+    " flare_baseline(text, date, timestamptz), flare_day_write(text, date, boolean, bigint)"
 )
 
 
@@ -349,7 +446,7 @@ def upgrade() -> None:
     for statement in TRIGGER_FUNCTIONS:
         op.execute(statement)
     _create_triggers()
-    for statement in CURRENT_FUNCTIONS:
+    for statement in CURRENT_FUNCTIONS + SCORE_FUNCTIONS:
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES} FROM PUBLIC")
     op.execute(f"REVOKE EXECUTE ON FUNCTION {TRIGGER_FUNCTION_NAMES} FROM PUBLIC")

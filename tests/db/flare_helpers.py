@@ -1,6 +1,7 @@
 """Row builders for the flare tables. Each insert goes through the table's insert trigger."""
 
-from datetime import date
+from collections.abc import Sequence
+from datetime import date, timedelta
 from typing import Any
 
 from tests.db.helpers import add_document
@@ -103,3 +104,81 @@ def add_detection_and_coverage(
         " known_at) VALUES ('R9001', %s, 'SNPP', 'NRT', %s, coalesce(%s::timestamptz, now()))",
         (day, doc, known_at),
     )
+
+
+def add_coverage(
+    conn: Conn,
+    day: date,
+    document_id: int,
+    satellites: tuple[str, ...] = ("SNPP", "NOAA20"),
+    product: str = "NRT",
+    refinery_id: str = "R9001",
+) -> None:
+    for satellite in satellites:
+        conn.execute(
+            "INSERT INTO flare_coverage (refinery_id, day, satellite, product, raw_document_id)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (refinery_id, day, satellite, product, document_id),
+        )
+
+
+def add_detection(
+    conn: Conn,
+    footprint_id: int,
+    day: date,
+    frp: float,
+    document_id: int,
+    satellite: str = "SNPP",
+    product: str = "NRT",
+    hour: int = 7,
+    minute: int = 0,
+    refinery_id: str = "R9001",
+) -> None:
+    conn.execute(
+        "INSERT INTO flare_detection (refinery_id, footprint_id, satellite, product, acquired_at,"
+        " latitude, longitude, frp_mw, confidence, daynight, raw_document_id)"
+        " VALUES (%s, %s, %s, %s, (%s::date + make_interval(hours => %s, mins => %s))"
+        " AT TIME ZONE 'UTC', 29.7, -95.0, %s, 'n', 'N', %s)",
+        (refinery_id, footprint_id, satellite, product, day, hour, minute, frp, document_id),
+    )
+
+
+def seed_days(
+    conn: Conn,
+    footprint_id: int,
+    first: date,
+    values: Sequence[float | None],
+    refinery_id: str = "R9001",
+) -> list[date]:
+    """One covered day per value: None leaves the day out, 0 has no detection, else one."""
+    document_id = add_document(conn, 5000 + first.toordinal() % 1000)
+    days: list[date] = []
+    for offset, value in enumerate(values):
+        day = first + timedelta(days=offset)
+        if value is None:
+            continue
+        add_coverage(conn, day, document_id, refinery_id=refinery_id)
+        if value > 0:
+            add_detection(conn, footprint_id, day, value, document_id, refinery_id=refinery_id)
+        days.append(day)
+    return days
+
+
+def write_day(
+    conn: Conn, day: date, backfilled: bool = False, refinery_id: str = "R9001"
+) -> int | None:
+    row = conn.execute(
+        "SELECT flare_day_write(%s, %s, %s, NULL) AS id", (refinery_id, day, backfilled)
+    ).fetchone()
+    assert row is not None
+    return None if row["id"] is None else int(row["id"])
+
+
+def current_day(conn: Conn, day: date, refinery_id: str = "R9001") -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT * FROM flare_day_current_as_of(clock_timestamp())"
+        " WHERE refinery_id = %s AND day = %s",
+        (refinery_id, day),
+    ).fetchone()
+    assert row is not None
+    return dict(row)

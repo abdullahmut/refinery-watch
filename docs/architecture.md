@@ -19,7 +19,7 @@ DigitalOcean, London region, one VPC.
 ## Storage
 
 Postgres is the only database. Cloudflare R2, over the S3 API, holds raw documents and backups.
-Raw documents go to `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.html`.
+Raw documents go to `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`.
 
 ## Data flow
 
@@ -59,8 +59,7 @@ Raw documents go to `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.html`.
 - Memory limits on the data Droplet: Postgres 384 MB. No object store runs there; see
   [029](decisions/029-cloudflare-r2-object-store.md). Limits on app and ingest: undecided.
 - How deploys reach the VMs: undecided.
-- Where the second backup copy lives: undecided. It must be off the data Droplet to survive losing
-  it.
+- Where the second backup copy lives: the R2 backup bucket, off DigitalOcean (029).
 - Where Terraform state lives: local, see [006](decisions/006-terraform-state-location.md).
 - The seven open decisions listed in [docs/definitions.md](definitions.md): undecided.
 - Open for the `outage_event` schema spec. A `supersedes` column on the new row points at the row

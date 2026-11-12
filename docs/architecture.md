@@ -38,7 +38,7 @@ Specified, not built:
 
 DigitalOcean, London region, one VPC. Cloud firewalls allow SSH on a non-default port from listed
 addresses and 443 on app only. On data, port 5432 is open only to the app and ingest Droplet
-tags. Nothing else is open on data, and port 9000 is closed (infra/terraform c900c59; still open on this branch's base).
+tags. Nothing else is open on data.
 
 | Droplet | RAM | Role | Runs |
 | --- | --- | --- | --- |

@@ -117,20 +117,9 @@ make up                 # Postgres on 127.0.0.1:5432
 make down
 ```
 
-Copy `.env.example` to `.env` before `make up`. The local stack needs `POSTGRES_PASSWORD`,
-`PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. `.env.example` is updated on infra/data-compose. The
-operator must add the `PG_*` and `OBJECT_STORE_*` keys by hand. Never commit `.env`.
-
-The data-compose `.env.example` has these keys: `DATABASE_URL`, `S3_ENDPOINT`, `S3_ACCESS_KEY`,
-`S3_SECRET_KEY`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `SENTRY_DSN`, `ALERT_EMAIL_TO`,
-`DAILY_COST_CAP_USD`, `NOTE_RECIPIENTS`, `POSTGRES_PASSWORD`, `PG_OWNER_PASSWORD`,
-`PG_APP_PASSWORD`, `DATA_BIND_ADDR`, `CONTACT_EMAIL`, `EIA_API_KEY`, `OBJECT_STORE_ENDPOINT`,
-`OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY`. Code reads none of
-`DATABASE_URL`, `S3_*` or `OBJECT_STORE_BUCKET`. The operator must still add by hand:
-`PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_APP_USER`, `OBJECT_STORE_REGION`,
-`OBJECT_STORE_BUCKET_RAW`, `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`
-(data Droplet only), `FIRMS_MAP_KEY`, `NOTE_FROM`, `FLARE_ALERT_DAILY_MAX`, `REFINERIES_CSV_PATH`,
-`REFINERY_LOCATIONS_CSV_PATH`, and `FETCH_IPV6` if wanted.
+Copy `.env.example` to `.env` before `make up`. It lists every key the code reads, with empty
+values. The local stack needs `POSTGRES_PASSWORD`, `PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. The
+`OBJECT_STORE_BACKUP_*` keys are for the backup job, which is not built yet. Never commit `.env`.
 
 Every key `config.py` reads:
 
@@ -164,9 +153,7 @@ Every key `config.py` reads:
 
 After the merges there are 10 tests marked `xfail(strict=True)`. Each states a defect that is not
 fixed yet. A strict xfail fails the run if the defect disappears, so the mark cannot go stale.
-This branch holds the last five, from feat/adapters and feat/flare-signal. The first five come
-from feat/schema. Their descriptions below paraphrase the reasons in feat/schema's
-`tests/db/test_open_issues.py`.
+The schema descriptions below paraphrase the reasons in `tests/db/test_open_issues.py`.
 
 Schema, in `tests/db/test_open_issues.py`:
 
@@ -193,14 +180,6 @@ Adapter CLI, in `tests/db/test_open_issues_cli.py`:
 Flare, in `tests/db/test_flare_alert.py`:
 
 - An alert names a unit by code, not by tag.
-
-## Merge note
-
-`docs/runbook.md` conflicts with infra/data-compose's version at merge. The conflicting entries are
-the index at the top, "Provision a fresh stack", "Start Postgres on the data VM" (named "on the
-data Droplet" there), "How each job connects to Postgres", "Reset the laptop database", and the
-"Flare signal" entry, against data-compose's "Create the R2 buckets and tokens". The rotation entry
-is identical.
 
 ## Data credits
 

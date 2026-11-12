@@ -25,9 +25,9 @@ or it gets no score. The floor means a dark plant needs about 11 MW in a day to 
 Thresholds live in `flare_threshold`, append-only, two kinds. Defaults until calibrated: signal
 z >= 3.5 with at least 1 detection, alert z >= 6.0 with at least 2 detections. The calibrate
 command takes a target false-alarm rate per plant-month (signal 1.0, alert 0.2). It treats a
-plant-day as quiet when no outage or regulator item at that plant starts within 7 days. It picks
-the lowest z on a 0.25 grid from 3.0 to 10.0 that meets the target. It refuses with fewer than
-1,000 scored plant-days, and writes a row only with `--write`.
+scored plant-day as quiet when no outage or regulator item at that plant starts within 7 days.
+It picks the lowest z on a 0.25 grid from 3.0 to 10.0 that meets the target. It refuses with fewer
+than 1,000 quiet scored plant-days, and writes a row only with `--write`.
 
 ## Consequences
 
@@ -36,3 +36,8 @@ baseline and z are stored on the row as known when it was written, so a later re
 day does not rescore later days. Defaults are guesses and are labelled `default` in every output
 until a calibrated row exists. To change the method, add a record and a new score column; old rows
 keep the score they were written with.
+
+The two default threshold rows are stored with a known time of 1970-01-01, so they apply at every
+as-of time. A calibrated row applies only from the time it was written. In an alert, "times
+normal" is (1 + the day's FRP sum) divided by (1 + the baseline median FRP), which is
+`exp(x - median)` on the stored values. It is left out when the median is under 1 MW.

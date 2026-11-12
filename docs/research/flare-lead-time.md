@@ -16,7 +16,7 @@ An in-house signal built from free public data. It scores daily satellite fire d
 each refinery's footprint against that plant's own 90-day normal. A flagged day is used in three
 ways:
 
-- as corroboration for an outage that a news or regulator source already reported (record 040);
+- as corroboration for an outage that a news or company source already reported (record 040);
 - as an email alert when a plant runs far above normal (record 041);
 - as the input to the measurements below.
 
@@ -54,7 +54,8 @@ A day is scored only when both satellites were fetched for it. NOAA-21 is left o
 
 A plant's footprint is an OpenStreetMap polygon that contains the operator's point, or a circle
 round the point when none does (record 037). A detection counts if it is inside the footprint or
-within 375 m of its edge, which is one pixel. Only an exact polygon is not flagged approximate.
+within 375 m of its edge, which is one pixel. Every footprint that is not an exact polygon is
+flagged approximate.
 
 ## Score
 
@@ -124,15 +125,18 @@ WITH quiet AS (
                           BETWEEN d.day - 7 AND d.day + 7)
 )
 SELECT count(*) FILTER (WHERE z >= :z_min AND n_detections >= :min_detections)
-         * 30.4375 / count(*) AS false_alarms_per_plant_month
+         * 30.4375 / nullif(count(*), 0) AS false_alarms_per_plant_month
 FROM quiet;
 ```
 
-Wilson 95 percent bounds for `h` hits in `n` events, with `p = h / n` and `z = 1.96`:
+Wilson 95 percent bounds for `h` hits in `n` events, with `p = h / n` and `k = 1.96`:
 
 ```
-(p + z^2 / 2n -/+ z * sqrt(p * (1 - p) / n + z^2 / 4n^2)) / (1 + z^2 / n)
+low  = (p + k^2 / (2n) - k * sqrt(p * (1 - p) / n + k^2 / (4n^2))) / (1 + k^2 / n)
+high = (p + k^2 / (2n) + k * sqrt(p * (1 - p) / n + k^2 / (4n^2))) / (1 + k^2 / n)
 ```
+
+Both are undefined when `n` is 0. The SQL uses `nullif(n, 0)`, so they come out empty.
 
 ## Running it
 

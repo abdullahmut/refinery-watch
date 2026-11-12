@@ -25,7 +25,7 @@ Its path comes from `REFINERY_LOCATIONS_CSV_PATH`, like the refineries file. Kin
 `osm_polygon`, `osm_bounds` (a relation whose outer ring could not be closed, so its bounding box is
 used) and `point_radius`. Only `osm_polygon` is exact. A detection counts if it is inside the
 footprint or within 375 m of its edge, one VIIRS pixel, because detection positions are pixel
-centres. Point-in-polygon and distance are about 60 lines of plain Python, so there is no GEOS,
+centres. Point-in-polygon and distance are short plain Python, so there is no GEOS,
 shapely or PostGIS.
 
 ## Consequences

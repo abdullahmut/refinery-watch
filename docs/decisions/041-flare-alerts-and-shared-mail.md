@@ -7,7 +7,7 @@ Date: 2026-11-12
 A high score should reach the desk before the morning note. Cron can run a job twice, a send can
 time out after Resend accepted it, and a plant can stay hot for days. No mail client exists yet;
 feat/note planned its own Resend client under `note/`. The mail key lives only on the app Droplet
-(record 031). Resend's free plan allows 100 emails a day.
+(record 031). Resend's free plan has a daily email limit. Check the current plan.
 
 ## Options
 

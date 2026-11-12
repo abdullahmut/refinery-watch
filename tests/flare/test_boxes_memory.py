@@ -1,4 +1,8 @@
-"""The parse-and-assign path holds one reply and a few objects, not the whole file twice."""
+"""Parsing a 5 MB reply and assigning its rows to 200 footprints of 2,000 vertices.
+
+The footprints and the body are built before tracing starts. The traced peak is what the
+parse-and-assign path adds, and it must stay under 64 MB.
+"""
 
 import math
 import random

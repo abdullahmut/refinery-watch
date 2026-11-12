@@ -34,7 +34,7 @@ must be checked before any use, and none has been.
 
 Bluesky and Reddit are worth a later trial, as weak signals only. A post would never create an
 `outage_event` row, never count as corroboration, never raise confidence and never count as
-capacity. Before any code, three steps, in order. First, a decision record that changes
+capacity. Before any adapter code, three steps, in order. First, a decision record that changes
 definitions.md to add a social-signal class. Second, the operator reads the terms and rate limits,
 records the date, and a status for the source is added to `CLEAR_STATUSES`. Third, the source row
 goes into data/sources.csv and `SOURCES_CSV_SHA256` in tests/test_sources_csv.py is updated.

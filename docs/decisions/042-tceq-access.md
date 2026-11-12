@@ -12,7 +12,7 @@ data/sources.csv. Our fetcher has never contacted TCEQ, because the gate has nev
 ## Options
 
 - The public EER web pages (the `feed_url` in sources.csv), if robots.txt and the site terms
-  allow them. No new format, but the earlier check suggests a refusal.
+  allow them, but the earlier check suggests a refusal.
 - A Texas open data portal export. sources.csv names data.texas.gov. Whether an emission event
   dataset exists there, its name, and how often it updates are all to confirm. Structured and
   official, but it may lag the web pages.
@@ -45,5 +45,5 @@ LDEQ incident reports follow the same rule in a later branch.
 by a regulator record. `QUIET_SQL` in flare/calibrate.py uses `tceq_event` to remove days near a
 regulator record from the quiet baseline. While the table is empty, those days count as quiet,
 so calibration runs on a noisier baseline. The `regulator_near` context in flare evidence is
-always empty. An export may need its own adapter. To undo, set the status back to a refused
+always empty. Either route needs a new adapter. To undo, set the status back to a refused
 value, update the hash and reload.

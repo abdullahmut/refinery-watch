@@ -12,7 +12,7 @@ from typing import Any
 
 import psycopg
 
-from refinery_watch.config import ConfigError, database_url, refineries_csv_path
+from refinery_watch.config import ConfigError, app_database_url, refineries_csv_path
 from refinery_watch.db.connect import Conn, connect
 
 Row = dict[str, Any]
@@ -313,7 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         path = args.csv if args.command == "sources" else refineries_csv_path()
         loader = load_sources if args.command == "sources" else load_refineries
-        with connect(database_url()) as conn:
+        with connect(app_database_url()) as conn:
             result = loader(conn, path)
             conn.commit()
     except (ConfigError, SeedError, OSError) as exc:

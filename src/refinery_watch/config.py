@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 
 class ConfigError(RuntimeError):
@@ -18,8 +18,28 @@ def _required(name: str) -> str:
     return value
 
 
-def database_url() -> str:
-    return _required("DATABASE_URL")
+def app_database_url() -> str:
+    """Build the app role URL from PG_* settings. DATABASE_URL is the only other source."""
+    explicit = os.environ.get("DATABASE_URL", "")
+    password = os.environ.get("PG_APP_PASSWORD", "")
+    if explicit and password:
+        raise ConfigError("set DATABASE_URL or PG_APP_PASSWORD, not both")
+    if explicit:
+        return explicit
+    host = _required("PG_HOST")
+    if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+        raise ConfigError("PG_HOST must be a host name or IPv4 address")
+    port = os.environ.get("PG_PORT") or "5432"
+    if not re.fullmatch(r"[0-9]{1,5}", port):
+        raise ConfigError("PG_PORT must be a number")
+    database = os.environ.get("PG_DATABASE") or "refinery_watch"
+    user = os.environ.get("PG_APP_USER") or "refinery_app"
+    if not password:
+        raise ConfigError("PG_APP_PASSWORD is not set")
+    return (
+        f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
+        f"@{host}:{port}/{quote(database, safe='')}"
+    )
 
 
 def refineries_csv_path() -> Path:

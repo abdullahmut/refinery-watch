@@ -148,8 +148,10 @@ def test_main_errors_exit_nonzero(
     fresh_schema: str,
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("PG_HOST", raising=False)
+    monkeypatch.delenv("PG_APP_PASSWORD", raising=False)
     assert seed.main(["sources"]) == 2
-    assert "DATABASE_URL" in capsys.readouterr().err
+    assert "PG_HOST" in capsys.readouterr().err
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1/none")
     monkeypatch.setattr(seed, "connect", schema_connector(pg_server, fresh_schema))
     assert seed.main(["sources", "--csv", "no/such/file.csv"]) == 2

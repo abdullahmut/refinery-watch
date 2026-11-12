@@ -61,12 +61,14 @@ def test_template_downgrade_is_forward_only() -> None:
     assert 'raise NotImplementedError("forward-only")' in template
 
 
-def test_main_unset_database_url_names_variable(
+def test_main_unset_pg_host_names_variable(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("PG_HOST", raising=False)
+    monkeypatch.delenv("PG_APP_PASSWORD", raising=False)
     assert migrate.main([]) == 2
-    assert "DATABASE_URL" in capsys.readouterr().err
+    assert "PG_HOST" in capsys.readouterr().err
 
 
 def test_main_bad_role_exits_nonzero(

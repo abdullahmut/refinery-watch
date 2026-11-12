@@ -10,8 +10,8 @@ import httpx
 
 from refinery_watch.config import (
     ConfigError,
+    app_database_url,
     contact_email,
-    database_url,
     eia_api_key,
     fetch_ipv6,
     object_store_settings,
@@ -102,7 +102,7 @@ def main(
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 2
     try:
-        url = database_url()
+        url = app_database_url()
         email = contact_email()
         settings = object_store_settings()
         eia_key = eia_api_key() if name == "eia_wpsr" else None

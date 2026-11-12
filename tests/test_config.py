@@ -1,27 +1,82 @@
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
 from refinery_watch.config import (
     ConfigError,
+    app_database_url,
     contact_email,
-    database_url,
     eia_api_key,
     fetch_ipv6,
     object_store_settings,
     refineries_csv_path,
 )
 
-
-def test_database_url_unset_names_variable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    with pytest.raises(ConfigError, match="DATABASE_URL"):
-        database_url()
+PG_VARS = ("DATABASE_URL", "PG_HOST", "PG_PORT", "PG_DATABASE", "PG_APP_USER", "PG_APP_PASSWORD")
 
 
-def test_database_url_returned(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
-    assert database_url() == "postgresql://x@127.0.0.1/db"
+@pytest.fixture
+def pg_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    for name in PG_VARS:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def test_url_built_with_defaults(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "10.0.0.5")
+    pg_env.setenv("PG_APP_PASSWORD", "pw")
+    assert app_database_url() == "postgresql://refinery_app:pw@10.0.0.5:5432/refinery_watch"
+
+
+def test_url_built_with_overrides(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "db.internal")
+    pg_env.setenv("PG_PORT", "5434")
+    pg_env.setenv("PG_DATABASE", "other")
+    pg_env.setenv("PG_APP_USER", "someone")
+    pg_env.setenv("PG_APP_PASSWORD", "pw")
+    assert app_database_url() == "postgresql://someone:pw@db.internal:5434/other"
+
+
+def test_password_special_characters_are_quoted(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "p@ss:w/o rd?#%")
+    url = app_database_url()
+    assert url == "postgresql://refinery_app:p%40ss%3Aw%2Fo%20rd%3F%23%25@h:5432/refinery_watch"
+    assert unquote(urlsplit(url).password or "") == "p@ss:w/o rd?#%"
+
+
+@pytest.mark.parametrize("missing", ["PG_HOST", "PG_APP_PASSWORD"])
+def test_url_missing_value_names_variable(pg_env: pytest.MonkeyPatch, missing: str) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "secret-pw")
+    pg_env.delenv(missing)
+    with pytest.raises(ConfigError, match=missing) as info:
+        app_database_url()
+    assert "secret-pw" not in str(info.value)
+
+
+def test_url_both_set_raises_without_echoing_password(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "secret-pw")
+    with pytest.raises(ConfigError, match="not both") as info:
+        app_database_url()
+    assert "secret-pw" not in str(info.value)
+
+
+def test_database_url_alone_is_returned(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    assert app_database_url() == "postgresql://x@127.0.0.1/db"
+
+
+@pytest.mark.parametrize(("name", "value"), [("PG_PORT", "54x"), ("PG_HOST", "a/b")])
+def test_url_bad_value_rejected(pg_env: pytest.MonkeyPatch, name: str, value: str) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "pw")
+    pg_env.setenv(name, value)
+    with pytest.raises(ConfigError, match=name):
+        app_database_url()
 
 
 def test_refineries_csv_path_unset(monkeypatch: pytest.MonkeyPatch) -> None:

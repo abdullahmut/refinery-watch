@@ -306,9 +306,9 @@ python -m refinery_watch.db.migrate
 unset PG_OWNER_PASSWORD
 ```
 
-The owner password is stored in one place: the `.env` on the data Droplet. Compose passes it to
-Postgres, and the init script uses it once to create the role. It is never in the ingest or app
-`.env`, and no job reads it from a file. The same both-set rule applies.
+On the Droplets, the owner password is stored only in the data Droplet's `.env`. Compose passes it
+to the postgres container, which keeps it in its environment, and the init script uses it once to
+create the role. It is never in the ingest or app `.env`, and no job reads it from a file. The same both-set rule applies.
 
 Each role reads only its own override. Plain `DATABASE_URL` is not read by anything. Errors name
 the missing variable and never print a password or a connection string.

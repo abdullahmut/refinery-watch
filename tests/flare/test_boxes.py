@@ -176,3 +176,15 @@ def test_a_detection_across_the_antimeridian_is_assigned() -> None:
     found = list(assign([hit(-16.5, -179.995), hit(-16.5, 179.5)], [plant], box))
     assert [(r, d.lon) for r, d in found] == [("R9001", -179.995)]
     assert plant.contains(-16.5, -179.995)
+
+
+def test_a_detection_east_of_180_reaches_a_plant_just_west_of_minus_180() -> None:
+    plant = circle(1, "Other", -16.5, -179.99, 2500)
+    point = hit(-16.5, 179.995)
+    found = [
+        r
+        for box in query_boxes([plant])
+        if box.bbox.contains(point.lat, point.lon)
+        for r, _ in assign([point], [plant], box)
+    ]
+    assert found == ["R9001"]

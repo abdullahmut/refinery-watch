@@ -36,7 +36,7 @@ KIND_LABELS: Final = {
     "outage_open": "Open outage",
     "regulator_near": "Regulator record",
 }
-_LINE_BREAKS: Final = re.compile(r"\s+")
+_WHITESPACE: Final = re.compile(r"\s+")
 log = logging.getLogger("refinery_watch.flare")
 
 AlertOutcome = Literal["sent", "send_failed", "capped", "already_claimed", "stale_day", "dry_run"]
@@ -80,7 +80,7 @@ CANDIDATE_SQL: Final = """
 SELECT d.id AS flare_day_id, d.refinery_id, r.name, r.country, r.region, d.day AS flare_date,
        d.n_detections, round(d.frp_sum_mw, 1) AS frp_sum_mw,
        round((exp(d.baseline_median) - 1)::numeric, 1) AS median_frp_mw,
-       CASE WHEN exp(d.baseline_median) - 1 < 1 THEN NULL
+       CASE WHEN round((exp(d.baseline_median) - 1)::numeric, 1) < 1 THEN NULL
             ELSE round(exp(d.x - d.baseline_median)::numeric, 1) END AS ratio,
        round(d.z::numeric, 2) AS z, d.baseline_days, t.z_min, t.method AS threshold_method,
        f.kind AS footprint_kind, f.radius_m
@@ -128,7 +128,7 @@ def candidates(conn: Conn, now: datetime) -> list[AlertCandidate]:
 
 
 def _one_line(text: str) -> str:
-    return _LINE_BREAKS.sub(" ", text).strip()
+    return _WHITESPACE.sub(" ", text).strip()
 
 
 def _footprint_line(c: AlertCandidate) -> str:
@@ -141,7 +141,7 @@ def _footprint_line(c: AlertCandidate) -> str:
 
 def _item_text(text: str | None) -> str:
     """One line, no control or bidi characters, at most ITEM_CHARS long."""
-    spaced = _LINE_BREAKS.sub(" ", text or "")
+    spaced = _WHITESPACE.sub(" ", text or "")
     kept = "".join(ch for ch in spaced if unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Co"))
     return kept.strip()[:ITEM_CHARS].strip()
 

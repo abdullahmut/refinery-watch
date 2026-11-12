@@ -326,3 +326,17 @@ def test_an_unchanged_location_and_reply_still_writes_nothing(app: Conn) -> None
     outcome = go(app, fetcher, FakeStore(), [R1])
     assert outcome.rows_out == 0
     assert count(app, "plant_footprint") == 1
+
+
+def test_verified_and_source_url_changes_each_reach_the_footprint(app: Conn) -> None:
+    reply = EMPTY
+    steps = ((False, None), (True, None), (True, "https://example.test/a"))
+    for verified, url in steps:
+        fetcher, _, _ = make_fetcher(by_plant({"29.74500": reply}))
+        place = replace(R1, verified=verified, source_url=url)
+        go(app, fetcher, FakeStore(), [place])
+        row = app.execute(
+            "SELECT location_verified, location_source_url"
+            " FROM footprint_current_as_of(clock_timestamp()) WHERE refinery_id = 'R9001'"
+        ).fetchone()
+        assert row == {"location_verified": verified, "location_source_url": url}

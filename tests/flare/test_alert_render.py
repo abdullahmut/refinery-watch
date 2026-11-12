@@ -60,6 +60,7 @@ def check(name: str, suffix: str, actual: str) -> None:
     assert actual == path.read_text(encoding="utf-8"), f"{path.name} differs"
 
 
+# ratio_shown has no evidence, so it is also the snapshot for the evidence-none case.
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_text_and_html_match_the_snapshot(name: str) -> None:
     subject, text, page = render(CASES[name], NOW)

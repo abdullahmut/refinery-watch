@@ -455,15 +455,17 @@ EVIDENCE_FUNCTIONS = [
         SELECT c.outage_event_id, c.effective FROM outage_confidence_as_of(as_of) c
       ), items AS (
         SELECT 'outage_near'::text AS kind, o.id AS ref_id, o.start_date AS item_date,
-               o.event_type, o.unit_label, e.effective AS confidence,
-               o.whole_plant
+               o.event_type, coalesce(o.unit_label, ru.unit_code) AS unit_label,
+               e.effective AS confidence, o.whole_plant
         FROM outage_current_as_of(as_of) o JOIN eff e ON e.outage_event_id = o.id
+        LEFT JOIN refinery_unit ru ON ru.id = o.refinery_unit_id
         WHERE o.refinery_id = p_refinery_id
           AND o.start_date BETWEEN p_day - 3 AND p_day + 3
         UNION ALL
-        SELECT 'outage_open', o.id, o.start_date, o.event_type, o.unit_label, e.effective,
-               o.whole_plant
+        SELECT 'outage_open', o.id, o.start_date, o.event_type,
+               coalesce(o.unit_label, ru.unit_code), e.effective, o.whole_plant
         FROM outage_as_of(as_of) o JOIN eff e ON e.outage_event_id = o.id
+        LEFT JOIN refinery_unit ru ON ru.id = o.refinery_unit_id
         WHERE o.refinery_id = p_refinery_id
           AND o.start_date NOT BETWEEN p_day - 3 AND p_day + 3
         UNION ALL

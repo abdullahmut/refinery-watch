@@ -2,12 +2,14 @@
 
 import csv
 import io
-from collections.abc import Iterator
+import math
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Final, Literal, cast
 
+from refinery_watch.flare.footprints import Footprint
 from refinery_watch.flare.geometry import BBox
 from refinery_watch.sources.http import FetchError
 
@@ -29,6 +31,12 @@ REDACTED: Final = "REDACTED"
 _CONFIDENCE: Final = frozenset({"l", "n", "h"})
 _DAYNIGHT: Final = frozenset({"D", "N"})
 _TIME_DIGITS: Final = 4
+
+
+@dataclass(frozen=True, slots=True)
+class QueryBox:
+    bbox: BBox
+    refinery_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,3 +176,73 @@ def safe_note(exc: FetchError, key: str) -> str:
     """Reason, host and status only. str(exc) holds the path, and the path holds the key."""
     status = "" if exc.status is None else f" status={exc.status}"
     return redacted(f"{type(exc).__name__}: {exc.reason} host={exc.host}{status}", key)
+
+
+def _clamped(box: BBox) -> BBox:
+    return BBox(
+        max(-180.0, box.west), max(-90.0, box.south), min(180.0, box.east), min(90.0, box.north)
+    )
+
+
+def _region_box(group: Sequence[Footprint]) -> BBox:
+    box = group[0].search_box()
+    for footprint in group[1:]:
+        box = box.union(footprint.search_box())
+    return box
+
+
+def query_boxes(footprints: Sequence[Footprint]) -> list[QueryBox]:
+    """One padded box per region when it is small enough, else one per plant. Sorted."""
+    regions: dict[str, list[Footprint]] = {}
+    for footprint in footprints:
+        regions.setdefault(footprint.region, []).append(footprint)
+    boxes: list[QueryBox] = []
+    for region in sorted(regions):
+        group = sorted(regions[region], key=lambda f: f.refinery_id)
+        whole = _region_box(group)
+        if whole.width() <= MAX_BOX_DEGREES and whole.height() <= MAX_BOX_DEGREES:
+            ids = tuple(f.refinery_id for f in group)
+            boxes.append(QueryBox(_clamped(whole.padded(BOX_PAD_DEGREES)), ids))
+            continue
+        for footprint in group:
+            padded = footprint.search_box().padded(BOX_PAD_DEGREES)
+            boxes.append(QueryBox(_clamped(padded), (footprint.refinery_id,)))
+    return sorted(boxes, key=lambda b: b.refinery_ids)
+
+
+MAX_GRID_CELLS: Final = 400
+Cell = tuple[int, int]
+Entry = tuple[Footprint, BBox]
+
+
+def _grid(entries: Sequence[Entry]) -> tuple[dict[Cell, list[Entry]], list[Entry]]:
+    """One-degree cells, so a detection is tested only against plants near it."""
+    cells: dict[Cell, list[Entry]] = {}
+    wide: list[Entry] = []
+    for entry in entries:
+        box = entry[1]
+        rows = range(math.floor(box.south), math.floor(box.north) + 1)
+        columns = range(math.floor(box.west), math.floor(box.east) + 1)
+        if len(rows) * len(columns) > MAX_GRID_CELLS:
+            wide.append(entry)
+            continue
+        for row in rows:
+            for column in columns:
+                cells.setdefault((row, column), []).append(entry)
+    return cells, wide
+
+
+def assign(
+    detections: Iterable[Detection], footprints: Sequence[Footprint], box: QueryBox
+) -> Iterator[tuple[str, Detection]]:
+    """Yields (refinery_id, detection) for each footprint a detection falls in or near."""
+    wanted = set(box.refinery_ids)
+    entries = [(f, f.search_box()) for f in footprints if f.refinery_id in wanted]
+    cells, wide = _grid(entries)
+    for detection in detections:
+        cell = (math.floor(detection.lat), math.floor(detection.lon))
+        for footprint, search in [*cells.get(cell, ()), *wide]:
+            if search.contains(detection.lat, detection.lon) and footprint.contains(
+                detection.lat, detection.lon
+            ):
+                yield footprint.refinery_id, detection

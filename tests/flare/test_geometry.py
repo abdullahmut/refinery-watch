@@ -12,6 +12,7 @@ from refinery_watch.flare.geometry import (
     haversine_m,
     point_in_ring,
     ring_bbox,
+    ring_within_m,
 )
 
 LAT = 29.7
@@ -128,3 +129,11 @@ def test_close_ring_needs_four_closed_points() -> None:
     assert close_ring(open_ring) is None
     triangle = [(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)]
     assert close_ring(triangle) is None
+
+
+def test_ring_within_m_inside_near_and_far() -> None:
+    assert ring_within_m(LAT, LON, SQUARE, 0.0)
+    near = LON + HALF + metres_east(LAT, 300)
+    assert ring_within_m(LAT, near, SQUARE, 375.0)
+    assert not ring_within_m(LAT, near, SQUARE, 250.0)
+    assert not ring_within_m(LAT + 1, LON, SQUARE, 375.0)

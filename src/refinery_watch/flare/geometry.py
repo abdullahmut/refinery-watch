@@ -83,10 +83,7 @@ def distance_to_ring_m(lat: float, lon: float, ring: Ring) -> float:
     return best
 
 
-def point_in_ring(lat: float, lon: float, ring: Ring) -> bool:
-    """Ray casting. A point on an edge or vertex counts as inside."""
-    if distance_to_ring_m(lat, lon, ring) <= EDGE_TOLERANCE_M:
-        return True
+def _ray_inside(lat: float, lon: float, ring: Ring) -> bool:
     inside = False
     x1, y1 = ring[0]
     for x2, y2 in ring[1:]:
@@ -94,6 +91,16 @@ def point_in_ring(lat: float, lon: float, ring: Ring) -> bool:
             inside = not inside
         x1, y1 = x2, y2
     return inside
+
+
+def point_in_ring(lat: float, lon: float, ring: Ring) -> bool:
+    """Ray casting. A point on an edge or vertex counts as inside."""
+    return _ray_inside(lat, lon, ring) or distance_to_ring_m(lat, lon, ring) <= EDGE_TOLERANCE_M
+
+
+def ring_within_m(lat: float, lon: float, ring: Ring, metres: float) -> bool:
+    """Inside the ring, or no further than `metres` from its edge. One pass when inside."""
+    return _ray_inside(lat, lon, ring) or distance_to_ring_m(lat, lon, ring) <= metres
 
 
 def ring_bbox(ring: Ring) -> BBox:

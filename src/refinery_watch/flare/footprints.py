@@ -20,9 +20,8 @@ from refinery_watch.flare.geometry import (
     EARTH_RADIUS_M,
     BBox,
     Ring,
-    distance_to_ring_m,
     haversine_m,
-    point_in_ring,
+    ring_within_m,
 )
 from refinery_watch.flare.overpass import (
     ENDPOINT,
@@ -104,10 +103,7 @@ class Footprint:
             return False
         if self.kind == "osm_bounds":
             return True
-        return any(
-            point_in_ring(lat, lon, ring) or distance_to_ring_m(lat, lon, ring) <= BUFFER_M
-            for ring in self.rings
-        )
+        return any(ring_within_m(lat, lon, ring, BUFFER_M) for ring in self.rings)
 
 
 class LocationsError(ValueError):

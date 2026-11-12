@@ -19,7 +19,7 @@ from tests.mail.fake_resend import FakeMailer, failed
 from tests.sources.helpers import FakeStore
 
 from refinery_watch.flare import __main__ as cli
-from refinery_watch.flare.research import NO_HISTORY
+from refinery_watch.flare.research import NO_HISTORY, RESULTS_NOTE
 
 pytestmark = pytest.mark.integration
 
@@ -451,7 +451,7 @@ def test_research_writes_the_fixed_text_for_an_empty_history(
 ) -> None:
     out = tmp_path / "results.md"
     assert cli.main(["research", "--out", str(out)], now=lambda: datetime.now(UTC)) == 0
-    assert out.read_text(encoding="utf-8") == NO_HISTORY + "\n"
+    assert out.read_text(encoding="utf-8") == NO_HISTORY + "\n\n" + RESULTS_NOTE + "\n"
 
 
 def test_research_writes_results_for_a_loaded_history(

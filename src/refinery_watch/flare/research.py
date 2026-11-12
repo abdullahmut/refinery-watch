@@ -11,6 +11,10 @@ from refinery_watch.db.events import require_aware
 NO_HISTORY: Final = (
     "No FIRMS history is loaded. No hit rate, false alarm rate or lead time is reported."
 )
+RESULTS_NOTE: Final = (
+    "Signal only, not capacity. Lead times on backfilled days assume detections were available"
+    " 3 hours after the pass. Limits: docs/research/flare-lead-time.md."
+)
 WINDOW_DAYS: Final = 3
 QUIET_DAYS: Final = 7
 DAYS_PER_MONTH: Final = "30.4375"
@@ -273,13 +277,15 @@ def _section(f: ResearchFigures) -> list[str]:
 def render_results(signal: ResearchFigures, alert: ResearchFigures) -> str:
     """Formats the figures. It computes nothing."""
     if signal.scored_plant_days == 0:
-        return NO_HISTORY
+        return NO_HISTORY + "\n\n" + RESULTS_NOTE
     lines = [
         "# Flare signal results",
         "",
         f"Generated from SQL as of {signal.as_of.isoformat()}. Detections: NASA FIRMS VIIRS."
         " Outlines: OpenStreetMap contributors. Footprints that are not an exact outline are"
         " approximate, and the by-kind table shows how many scored days used each.",
+        "",
+        RESULTS_NOTE,
         "",
         *_section(signal),
         *_section(alert),

@@ -8,7 +8,13 @@ from tests.db.flare_helpers import no_network as no_network
 from tests.db.helpers import insert_raw_outage
 
 from refinery_watch.db.connect import Conn
-from refinery_watch.flare.research import NO_HISTORY, ResearchFigures, figures, render_results
+from refinery_watch.flare.research import (
+    NO_HISTORY,
+    RESULTS_NOTE,
+    ResearchFigures,
+    figures,
+    render_results,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_network")]
 
@@ -116,7 +122,7 @@ def test_an_empty_database_renders_the_fixed_text(db: Conn) -> None:
     assert signal.backfilled_share is None
     assert (signal.first_day, signal.last_day) == (None, None)
     assert signal.by_region == ()
-    assert render_results(signal, alert) == NO_HISTORY
+    assert render_results(signal, alert) == NO_HISTORY + "\n\n" + RESULTS_NOTE
     assert NO_HISTORY == (
         "No FIRMS history is loaded. No hit rate, false alarm rate or lead time is reported."
     )
@@ -290,3 +296,55 @@ def test_render_shows_n_a_for_missing_figures() -> None:
     assert "Hit rate n/a, Wilson 95 percent interval n/a to n/a." in text
     assert "median n/a hours over 0 events" in text
     assert "a rate of n/a per plant-month" in text
+
+
+def _flags(conn: Conn, flagged: dict[date, datetime]) -> None:
+    fp = add_footprint(conn)
+    for i in range(130):
+        day = FIRST + timedelta(days=i)
+        if day in flagged:
+            add_day(
+                conn, fp, day, z=5.0, n_detections=2, backfilled=True, available_at=flagged[day]
+            )
+        else:
+            add_day(conn, fp, day, z=0.5, n_detections=0)
+
+
+def test_a_flag_four_days_after_the_start_is_not_a_hit(db: Conn) -> None:
+    start = FIRST + timedelta(days=100)
+    late = start + timedelta(days=4)
+    _flags(db, {late: datetime.combine(late, datetime.min.time(), tzinfo=UTC)})
+    event(db, start)
+    f = figures(db, clock(db) + timedelta(seconds=1), "signal")
+    assert (f.unplanned_events, f.hits) == (1, 0)
+
+
+def test_a_source_known_after_the_time_does_not_move_the_first_report(db: Conn) -> None:
+    start = FIRST + timedelta(days=100)
+    _flags(db, {start: report_time(start) - timedelta(hours=10)})
+    found = event(db, start)
+    db.execute(
+        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence,"
+        " known_at) VALUES (%s, %s, 'corroboration', 'other_media', 'text', %s)",
+        (
+            found,
+            document(db, report_time(start) - timedelta(hours=30)),
+            datetime.now(UTC) + timedelta(days=1),
+        ),
+    )
+    f = figures(db, clock(db) + timedelta(seconds=1), "signal")
+    assert f.median_lead_hours == Decimal("10.0")
+
+
+def test_the_results_always_carry_the_fixed_limits_line(db: Conn) -> None:
+    now = datetime.now(UTC)
+    empty = render_results(figures(db, now, "signal"), figures(db, now, "alert"))
+    assert empty == NO_HISTORY + "\n\n" + RESULTS_NOTE
+    build(db)
+    later = clock(db) + timedelta(seconds=1)
+    full = render_results(figures(db, later, "signal"), figures(db, later, "alert"))
+    assert full.count(RESULTS_NOTE) == 1
+    assert RESULTS_NOTE == (
+        "Signal only, not capacity. Lead times on backfilled days assume detections were"
+        " available 3 hours after the pass. Limits: docs/research/flare-lead-time.md."
+    )

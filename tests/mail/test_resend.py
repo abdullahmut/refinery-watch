@@ -172,11 +172,12 @@ def test_the_key_is_not_in_the_repr() -> None:
     assert API_KEY not in repr(ResendClient(API_KEY, transport=FakeResend().transport()))
 
 
-def test_fingerprint_ignores_recipient_order_and_case() -> None:
+def test_fingerprint_ignores_recipient_order_but_not_case() -> None:
     a = email(to=("A@example.com", "b@example.com"))
-    b = email(to=("b@example.com", "a@example.com"))
+    b = email(to=("b@example.com", "A@example.com"))
     assert fingerprint(a) == fingerprint(b)
     assert len(fingerprint(a)) == 64
+    assert fingerprint(a) != fingerprint(email(to=("a@example.com", "b@example.com")))
 
 
 def test_fingerprint_changes_with_recipients_and_sender() -> None:
@@ -230,7 +231,7 @@ def test_context_manager_closes() -> None:
 
 def test_a_retry_that_passes_the_fingerprint_check_sends_the_same_bytes() -> None:
     first = email(to=("a@example.test", "b@example.test"))
-    later = email(to=("b@example.test", "A@example.test"))
+    later = email(to=("b@example.test", "a@example.test"))
     assert fingerprint(first) == fingerprint(later)
     fake = FakeResend()
     c, _ = client(fake)

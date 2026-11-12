@@ -51,16 +51,21 @@ class Mailer(Protocol):
     def send(self, email: Email, idempotency_key: str) -> SendResult: ...
 
 
+def _ordered(addresses: tuple[str, ...]) -> list[str]:
+    """Sorted without regard to case, case kept. The fingerprint and the payload both use it."""
+    return sorted(addresses, key=lambda a: (a.lower(), a))
+
+
 def fingerprint(email: Email) -> str:
-    """Hash of the sender and the recipient set, so a changed list is noticed."""
-    recipients = ",".join(sorted(address.lower() for address in email.to))
+    """Hash of the sender and the sorted recipients, so a changed list is noticed."""
+    recipients = ",".join(_ordered(email.to))
     return hashlib.sha256(f"{email.sender}\n{recipients}".encode()).hexdigest()
 
 
 def _payload(email: Email) -> bytes:
     body = {
         "from": email.sender,
-        "to": sorted(address.lower() for address in email.to),
+        "to": _ordered(email.to),
         "subject": email.subject,
         "html": email.html,
         "text": email.text,

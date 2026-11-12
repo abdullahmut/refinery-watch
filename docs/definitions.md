@@ -24,6 +24,8 @@ Not events, and never written to `outage_event`:
   with a note in the decision log.
 - Emissions events with no stated unit or throughput effect. These stay in `tceq_event` as a
   signal only.
+- Satellite fire detections. These stay in `flare_day` as a signal only. Flaring never creates
+  an event and is never capacity.
 
 ## Capacity affected
 
@@ -144,6 +146,13 @@ corroboration count. The model never outputs it.
 
 Regulator records (TCEQ, LDEQ) on their own are `low` and are shown in the note as signals, never
 as capacity offline, until a news or company source confirms a throughput effect.
+
+Satellite flaring can lift `low` to `medium`, never higher, and is never stored on the row. As
+of T, a row counts as `medium` when its stored confidence is `low`, it is `unplanned` or
+`planned`, its match score is 90 or more, a unit is named or it is whole-plant, capacity is not
+`not_stated`, neither `start_unknown` nor `old_start` is set, its chain has a source known by T
+that is not a regulator record, and a flare day known by T at that refinery meets the signal
+threshold in force at T on a day from 3 days before to 3 days after `start_date`. See record 040.
 
 ## Dedupe
 

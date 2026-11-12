@@ -283,3 +283,46 @@ def test_a_missing_named_ref_fails_that_plant(app: Conn) -> None:
     assert outcome.note is not None
     assert "way/42 is not in" in outcome.note
     assert "way(42)" in net.requests[0].url.params["data"]
+
+
+def test_a_changed_radius_in_the_locations_file_reaches_the_footprint(app: Conn) -> None:
+    fetcher, _, _ = make_fetcher(by_plant({}))
+    go(app, fetcher, FakeStore(), [R1])
+    bigger = replace(R1, radius_m=4000)
+    fetcher2, _, _ = make_fetcher(by_plant({}))
+    outcome = go(app, fetcher2, FakeStore(), [bigger])
+    assert outcome.rows_out == 1
+    row = app.execute(
+        "SELECT radius_m FROM footprint_current_as_of(clock_timestamp())"
+        " WHERE refinery_id = 'R9001'"
+    ).fetchone()
+    assert row == {"radius_m": 4000}
+    assert count(app, "raw_document") == 1
+    assert count(app, "plant_footprint") == 2
+
+
+def test_a_changed_verified_flag_or_source_url_reaches_the_footprint(app: Conn) -> None:
+    fetcher, _, _ = make_fetcher(by_plant({"29.74500": ONE_WAY}))
+    go(app, fetcher, FakeStore(), [R1])
+    moved = replace(R1, verified=False, source_url="https://example.test/b")
+    outcome = go(app, fetcher, FakeStore(), [moved])
+    assert outcome.rows_out == 1
+    row = app.execute(
+        "SELECT location_verified, location_source_url, raw_document_id"
+        " FROM footprint_current_as_of(clock_timestamp()) WHERE refinery_id = 'R9001'"
+    ).fetchone()
+    assert row is not None
+    assert (row["location_verified"], row["location_source_url"]) == (
+        False,
+        "https://example.test/b",
+    )
+    assert row["raw_document_id"] is not None
+    assert count(app, "raw_document") == 1
+
+
+def test_an_unchanged_location_and_reply_still_writes_nothing(app: Conn) -> None:
+    fetcher, _, _ = make_fetcher(by_plant({"29.74500": ONE_WAY}))
+    go(app, fetcher, FakeStore(), [R1])
+    outcome = go(app, fetcher, FakeStore(), [R1])
+    assert outcome.rows_out == 0
+    assert count(app, "plant_footprint") == 1

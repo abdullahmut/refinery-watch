@@ -53,6 +53,7 @@ LOCATION_COLUMNS: Final = (
     "verified",
 )
 DEFAULT_RADIUS_M: Final = 2_500
+MAX_LOCATIONS_BYTES: Final = 1_000_000
 RADIUS_RANGE: Final = (500, 10_000)
 _ID: Final = re.compile(r"R[0-9]{4}")
 _REF: Final = re.compile(r"(way|relation)/[0-9]+")
@@ -157,6 +158,8 @@ def _location(path: Path, line: int, raw: dict[str, str]) -> Location:
 
 def read_locations(path: Path) -> list[Location]:
     try:
+        if path.stat().st_size > MAX_LOCATIONS_BYTES:
+            raise LocationsError(f"{path.name} is over {MAX_LOCATIONS_BYTES} bytes")
         text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         raise LocationsError(f"{path.name} cannot be read as UTF-8 text") from None
@@ -204,11 +207,16 @@ def write_footprint(
     """Inserts a footprint that supersedes the current one. None when nothing changed."""
     sha = geometry_sha256(choice, location.lat, location.lon, location.radius_m)
     current = conn.execute(
-        "SELECT id, geometry_sha256 FROM footprint_current_as_of(clock_timestamp())"
-        " WHERE refinery_id = %s",
+        "SELECT id, geometry_sha256, location_verified, location_source_url"
+        " FROM footprint_current_as_of(clock_timestamp()) WHERE refinery_id = %s",
         (location.refinery_id,),
     ).fetchone()
-    if current is not None and current["geometry_sha256"] == sha:
+    if (
+        current is not None
+        and current["geometry_sha256"] == sha
+        and current["location_verified"] == location.verified
+        and current["location_source_url"] == location.source_url
+    ):
         return None
     point = choice.kind == "point_radius"
     rings = None if point else [[list(p) for p in ring] for ring in choice.rings]
@@ -313,7 +321,7 @@ def _fetch_one(
     def write_in_same_transaction(document_id: int) -> None:
         written.append(write_footprint(conn, location, choice, document_id))
 
-    content = query + "\n"
+    content_sha = hashlib.sha256(query.encode("utf-8") + b"\n" + reply.body).hexdigest()
     result = store_document(
         conn,
         store,
@@ -324,7 +332,7 @@ def _fetch_one(
             original=reply.body,
             ext="json",
             content_type="application/json",
-            content_sha256=hashlib.sha256(content.encode("utf-8") + reply.body).hexdigest(),
+            content_sha256=content_sha,
             headline=f"OpenStreetMap outline for {location.refinery_id}",
             body_chars=len(reply.body),
             fetched_at=reply.fetched_at,
@@ -333,7 +341,22 @@ def _fetch_one(
         ),
         in_same_tx=write_in_same_transaction,
     )
-    return isinstance(result, Stored) and written[0] is not None
+    if isinstance(result, Stored):
+        return written[0] is not None
+    return _write_for_known_reply(conn, location, choice, content_sha)
+
+
+def _write_for_known_reply(
+    conn: Conn, location: Location, choice: FootprintChoice, content_sha: str
+) -> bool:
+    """The reply is already stored, but the locations file may have changed since."""
+    row = conn.execute(
+        "SELECT id FROM raw_document WHERE content_sha256 = %s", (content_sha,)
+    ).fetchone()
+    document_id = None if row is None else int(row["id"])
+    written = write_footprint(conn, location, choice, document_id) is not None
+    conn.commit()
+    return written
 
 
 def run_footprints(

@@ -96,3 +96,19 @@ def test_an_empty_file_is_refused(tmp_path: Path) -> None:
     path.write_text("", encoding="utf-8")
     with pytest.raises(LocationsError, match="header"):
         read_locations(path)
+
+
+def test_a_file_over_one_megabyte_is_refused(tmp_path: Path) -> None:
+    path = write(tmp_path, "R9001,1,1,,,,no")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("#" * 1_000_001)
+    with pytest.raises(LocationsError, match="over 1000000 bytes"):
+        read_locations(path)
+
+
+def test_a_file_just_under_the_limit_is_read(tmp_path: Path) -> None:
+    path = write(tmp_path, "R9001,1,1,,,,no")
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write("\n" * (1_000_000 - path.stat().st_size))
+    assert path.stat().st_size == 1_000_000
+    assert len(read_locations(path)) == 1

@@ -1,0 +1,21 @@
+{
+  "version": 0.6,
+  "generator": "handmade",
+  "osm3s": {"copyright": "synthetic test data"},
+  "elements": [
+    {
+      "type": "way",
+      "id": 9000001,
+      "bounds": {"minlat": 29.735, "minlon": -95.022, "maxlat": 29.755, "maxlon": -95.002},
+      "nodes": [9100001, 9100002, 9100003, 9100004, 9100001],
+      "geometry": [
+        {"lat": 29.735, "lon": -95.022},
+        {"lat": 29.735, "lon": -95.002},
+        {"lat": 29.755, "lon": -95.002},
+        {"lat": 29.755, "lon": -95.022},
+        {"lat": 29.735, "lon": -95.022}
+      ],
+      "tags": {"industrial": "refinery", "name": "Testville Refinery"}
+    }
+  ]
+}

@@ -411,6 +411,76 @@ SCORE_FUNCTIONS = [
     """,
 ]
 
+EVIDENCE_FUNCTIONS = [
+    """
+    CREATE FUNCTION outage_confidence_as_of(as_of timestamptz)
+    RETURNS TABLE (outage_event_id bigint, chain_id bigint, stored text, effective text,
+                   flare_day_id bigint)
+    LANGUAGE sql STABLE AS $$
+      WITH flagged AS (
+        SELECT d.id, d.refinery_id, d.day
+        FROM flare_day_current_as_of(as_of) d
+        JOIN flare_threshold_as_of('signal', as_of) t ON t.id IS NOT NULL
+        WHERE d.z IS NOT NULL AND d.z >= t.z_min AND d.n_detections >= t.min_detections
+      )
+      SELECT o.id, o.chain_id, o.confidence,
+             CASE WHEN f.id IS NOT NULL THEN 'medium' ELSE o.confidence END,
+             f.id
+      FROM outage_current_as_of(as_of) o
+      LEFT JOIN LATERAL (
+        SELECT fl.id FROM flagged fl
+        WHERE o.confidence = 'low'
+          AND o.event_type IN ('unplanned', 'planned')
+          AND o.match_score >= 90
+          AND (o.refinery_unit_id IS NOT NULL OR o.whole_plant)
+          AND o.capacity_basis <> 'not_stated'
+          AND NOT o.start_unknown AND NOT o.old_start
+          AND fl.refinery_id = o.refinery_id
+          AND fl.day BETWEEN o.start_date - 3 AND o.start_date + 3
+          AND EXISTS (SELECT 1 FROM event_source s
+                      JOIN outage_event e ON e.id = s.outage_event_id
+                      WHERE e.chain_id = o.chain_id AND s.known_at <= as_of
+                        AND s.source_kind <> 'regulator')
+        ORDER BY abs(fl.day - o.start_date), fl.day
+        LIMIT 1
+      ) f ON true
+    $$
+    """,
+    """
+    CREATE FUNCTION flare_evidence_as_of(p_refinery_id text, p_day date, as_of timestamptz)
+    RETURNS TABLE (kind text, ref_id bigint, item_date date, event_type text, unit_label text,
+                   confidence text)
+    LANGUAGE sql STABLE AS $$
+      WITH eff AS (
+        SELECT c.outage_event_id, c.effective FROM outage_confidence_as_of(as_of) c
+      ), items AS (
+        SELECT 'outage_near'::text AS kind, o.id AS ref_id, o.start_date AS item_date,
+               o.event_type, o.unit_label, e.effective AS confidence
+        FROM outage_current_as_of(as_of) o JOIN eff e ON e.outage_event_id = o.id
+        WHERE o.refinery_id = p_refinery_id
+          AND o.start_date BETWEEN p_day - 3 AND p_day + 3
+        UNION ALL
+        SELECT 'outage_open', o.id, o.start_date, o.event_type, o.unit_label, e.effective
+        FROM outage_as_of(as_of) o JOIN eff e ON e.outage_event_id = o.id
+        WHERE o.refinery_id = p_refinery_id
+          AND o.start_date NOT BETWEEN p_day - 3 AND p_day + 3
+        UNION ALL
+        SELECT 'regulator_near', t.id,
+               (coalesce(t.started_at, t.known_at) AT TIME ZONE 'UTC')::date,
+               t.event_kind, t.units_text, NULL::text
+        FROM tceq_event t
+        WHERE t.refinery_id = p_refinery_id AND t.known_at <= as_of
+          AND (coalesce(t.started_at, t.known_at) AT TIME ZONE 'UTC')::date
+              BETWEEN p_day - 3 AND p_day + 3
+      )
+      SELECT i.kind, i.ref_id, i.item_date, i.event_type, i.unit_label, i.confidence
+      FROM items i
+      ORDER BY CASE i.kind WHEN 'outage_near' THEN 1 WHEN 'outage_open' THEN 2 ELSE 3 END,
+               i.item_date, i.ref_id
+    $$
+    """,
+]
+
 TRIGGER_FUNCTION_NAMES = (
     "flare_stamp_known_at(), plant_footprint_before_insert(), flare_day_before_insert(),"
     " flare_alert_before_insert(), flare_alert_attempt_before_insert()"
@@ -418,7 +488,8 @@ TRIGGER_FUNCTION_NAMES = (
 SQL_FUNCTION_NAMES = (
     "footprint_current_as_of(timestamptz), flare_day_current_as_of(timestamptz),"
     " flare_threshold_as_of(text, timestamptz), flare_day_figures(text, date, timestamptz),"
-    " flare_baseline(text, date, timestamptz), flare_day_write(text, date, boolean, bigint)"
+    " flare_baseline(text, date, timestamptz), flare_day_write(text, date, boolean, bigint),"
+    " outage_confidence_as_of(timestamptz), flare_evidence_as_of(text, date, timestamptz)"
 )
 
 
@@ -446,7 +517,7 @@ def upgrade() -> None:
     for statement in TRIGGER_FUNCTIONS:
         op.execute(statement)
     _create_triggers()
-    for statement in CURRENT_FUNCTIONS + SCORE_FUNCTIONS:
+    for statement in CURRENT_FUNCTIONS + SCORE_FUNCTIONS + EVIDENCE_FUNCTIONS:
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES} FROM PUBLIC")
     op.execute(f"REVOKE EXECUTE ON FUNCTION {TRIGGER_FUNCTION_NAMES} FROM PUBLIC")

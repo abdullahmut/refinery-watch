@@ -308,7 +308,10 @@ class Fetcher:
         accept: str = "*/*",
         same_host: bool = False,
     ) -> FetchResult:
-        """GET with robots, spacing and backoff. `same_host` refuses a redirect to another host."""
+        """GET with robots, spacing and backoff.
+
+        `same_host` refuses a redirect to another host, or to anything but https.
+        """
         current = urlsplit(url)._replace(fragment="").geturl()
         origin = host_key(current)
         send_params = params
@@ -321,6 +324,8 @@ class Fetcher:
                 target = urlsplit(urljoin(current, location))._replace(fragment="").geturl()
                 if same_host and host_key(target) != origin:
                     raise AddressRefused("cross_host_redirect", current)
+                if same_host and urlsplit(target).scheme != "https":
+                    raise AddressRefused("insecure_redirect", current)
                 current = target
                 send_params = ()
                 continue

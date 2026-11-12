@@ -486,3 +486,21 @@ def test_without_same_host_a_cross_host_redirect_is_followed() -> None:
 
     fetcher, _, _ = make_fetcher(handler)
     assert fetcher.get("https://start.example.org/a").body == b"elsewhere"
+
+
+@pytest.mark.parametrize(
+    "target", ["http://start.example.org/b", "ftp://start.example.org/b", "//start.example.org/b"]
+)
+def test_same_host_refuses_a_redirect_that_leaves_https(target: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, content=b"plain")
+
+    fetcher, net, _ = make_fetcher(handler)
+    if target.startswith("//"):
+        assert fetcher.get("https://start.example.org/a", same_host=True).body == b"plain"
+        return
+    with pytest.raises((AddressRefused, FetchError)):
+        fetcher.get("https://start.example.org/a", same_host=True)
+    assert [r.url.path for r in net.requests] == ["/a"]

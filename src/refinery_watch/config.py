@@ -18,11 +18,13 @@ def _required(name: str) -> str:
     return value
 
 
-def _database_url(override_var: str, user_var: str, default_user: str, password_var: str) -> str:
-    explicit = os.environ.get(override_var, "")
+def _database_url(
+    *, override_env: str, user_env: str, default_user: str, credential_env: str
+) -> str:
+    explicit = os.environ.get(override_env, "")
     if explicit:
-        if os.environ.get("PG_HOST") or os.environ.get(password_var):
-            raise ConfigError(f"set {override_var} or PG_HOST with {password_var}, not both")
+        if os.environ.get("PG_HOST") or os.environ.get(credential_env):
+            raise ConfigError(f"set {override_env} or PG_HOST with {credential_env}, not both")
         return explicit
     host = _required("PG_HOST")
     if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
@@ -31,10 +33,10 @@ def _database_url(override_var: str, user_var: str, default_user: str, password_
     if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
         raise ConfigError("PG_PORT must be a number from 1 to 65535")
     database = os.environ.get("PG_DATABASE") or "refinery_watch"
-    user = os.environ.get(user_var) or default_user
-    password = os.environ.get(password_var, "")
+    user = os.environ.get(user_env) or default_user
+    password = os.environ.get(credential_env, "")
     if not password:
-        raise ConfigError(f"{password_var} is not set")
+        raise ConfigError(f"{credential_env} is not set")
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
         f"@{host}:{port}/{quote(database, safe='')}"
@@ -43,17 +45,21 @@ def _database_url(override_var: str, user_var: str, default_user: str, password_
 
 def app_database_url() -> str:
     """Build the app role URL from PG_* settings. APP_DATABASE_URL is the only override."""
-    return _database_url("APP_DATABASE_URL", "PG_APP_USER", "refinery_app", "PG_APP_PASSWORD")
+    return _database_url(
+        override_env="APP_DATABASE_URL",
+        user_env="PG_APP_USER",
+        default_user="refinery_app",
+        credential_env="PG_APP_PASSWORD",
+    )
 
 
 def owner_database_url() -> str:
-    """Build the owner role URL for migrations and seeds.
-
-    OWNER_DATABASE_URL is the only override. PG_OWNER_PASSWORD is supplied in the
-    environment at run time by the operator. It is never stored in the app or ingest .env.
-    """
+    """Build the owner role URL for migrations and seeds. Only OWNER_DATABASE_URL overrides."""
     return _database_url(
-        "OWNER_DATABASE_URL", "PG_OWNER_USER", "refinery_owner", "PG_OWNER_PASSWORD"
+        override_env="OWNER_DATABASE_URL",
+        user_env="PG_OWNER_USER",
+        default_user="refinery_owner",
+        credential_env="PG_OWNER_PASSWORD",
     )
 
 

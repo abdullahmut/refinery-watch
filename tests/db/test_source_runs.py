@@ -19,6 +19,7 @@ from refinery_watch.sources.store import (
 pytestmark = pytest.mark.integration
 
 JOB = "fetch_hp_news"
+SOURCES_CSV = Path(__file__).resolve().parents[2] / "data" / "sources.csv"
 
 
 @pytest.fixture
@@ -170,9 +171,6 @@ def test_source_robots_status_gates_the_run(db: Conn, status: str, cleared: bool
             source_row(db, "gate_src")
 
 
-SOURCES_CSV = Path(__file__).resolve().parents[2] / "data" / "sources.csv"
-
-
 def insert_real_row(db: Conn, source_id: str) -> None:
     with SOURCES_CSV.open(encoding="utf-8", newline="") as handle:
         row = next(r for r in csv.DictReader(handle) if r["source_id"] == source_id)
@@ -201,7 +199,17 @@ def test_real_gdelt_doc_row_is_refused(db: Conn) -> None:
 
 
 @pytest.mark.parametrize("source_id", ["hp_news", "hp_refining"])
-def test_real_hp_rows_carry_ai_training_status(db: Conn, source_id: str) -> None:
+def test_real_hp_rows_are_cleared(db: Conn, source_id: str) -> None:
     insert_real_row(db, source_id)
     row = source_row(db, f"real_{source_id}")
     assert row.robots_status == "allowed_for_reference_use_ai_training_disallowed"
+
+
+@pytest.mark.parametrize("source_id", ["hp_news", "hp_refining"])
+def test_withdrawn_hp_row_is_refused(db: Conn, source_id: str) -> None:
+    insert_real_row(db, source_id)
+    db.execute(
+        "UPDATE source SET robots_status = 'withdrawn' WHERE id = %s", (f"real_{source_id}",)
+    )
+    with pytest.raises(SourceNotCleared):
+        source_row(db, f"real_{source_id}")

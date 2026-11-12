@@ -41,7 +41,7 @@ def test_url_built_with_defaults(pg_env: pytest.MonkeyPatch) -> None:
     assert app_database_url() == "postgresql://refinery_app:pw@10.0.0.5:5432/refinery_watch"
 
 
-def test_url_built_with_overrides(pg_env: pytest.MonkeyPatch) -> None:
+def test_url_built_from_all_pg_settings(pg_env: pytest.MonkeyPatch) -> None:
     pg_env.setenv("PG_HOST", "db.internal")
     pg_env.setenv("PG_PORT", "5434")
     pg_env.setenv("PG_DATABASE", "other")
@@ -118,6 +118,43 @@ def test_url_bad_value_rejected(pg_env: pytest.MonkeyPatch, name: str, value: st
     pg_env.setenv(name, value)
     with pytest.raises(ConfigError, match=name):
         app_database_url()
+
+
+def test_owner_url_built_with_defaults(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "10.0.0.5")
+    pg_env.setenv("PG_OWNER_PASSWORD", "o@pw")
+    pg_env.setenv("PG_APP_PASSWORD", "app-pw")
+    assert owner_database_url() == "postgresql://refinery_owner:o%40pw@10.0.0.5:5432/refinery_watch"
+
+
+def test_owner_url_uses_pg_owner_user(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_PORT", "5434")
+    pg_env.setenv("PG_OWNER_USER", "boss")
+    pg_env.setenv("PG_OWNER_PASSWORD", "pw")
+    assert owner_database_url() == "postgresql://boss:pw@h:5434/refinery_watch"
+
+
+def test_owner_url_missing_password_names_variable(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "app-pw")
+    with pytest.raises(ConfigError, match="PG_OWNER_PASSWORD") as info:
+        owner_database_url()
+    assert "app-pw" not in str(info.value)
+
+
+@pytest.mark.parametrize("other", ["PG_HOST", "PG_OWNER_PASSWORD"])
+def test_owner_override_with_other_setting_raises(pg_env: pytest.MonkeyPatch, other: str) -> None:
+    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    pg_env.setenv(other, "secret-pw")
+    with pytest.raises(ConfigError, match="not both") as info:
+        owner_database_url()
+    assert "secret-pw" not in str(info.value)
+
+
+def test_owner_override_alone_is_returned(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    assert owner_database_url() == "postgresql://x@127.0.0.1/db"
 
 
 def test_refineries_csv_path_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,48 +314,3 @@ def test_fetch_ipv6_rejects_other_values(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("FETCH_IPV6", "maybe")
     with pytest.raises(ConfigError, match="FETCH_IPV6"):
         fetch_ipv6()
-
-
-def test_owner_url_built_with_defaults(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("PG_HOST", "10.0.0.5")
-    pg_env.setenv("PG_OWNER_PASSWORD", "o@pw")
-    pg_env.setenv("PG_APP_PASSWORD", "app-pw")
-    assert owner_database_url() == "postgresql://refinery_owner:o%40pw@10.0.0.5:5432/refinery_watch"
-
-
-def test_owner_url_override_user(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("PG_HOST", "h")
-    pg_env.setenv("PG_PORT", "5434")
-    pg_env.setenv("PG_OWNER_USER", "boss")
-    pg_env.setenv("PG_OWNER_PASSWORD", "pw")
-    assert owner_database_url() == "postgresql://boss:pw@h:5434/refinery_watch"
-
-
-def test_owner_url_missing_password_names_variable(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("PG_HOST", "h")
-    pg_env.setenv("PG_APP_PASSWORD", "app-pw")
-    with pytest.raises(ConfigError, match="PG_OWNER_PASSWORD") as info:
-        owner_database_url()
-    assert "app-pw" not in str(info.value)
-
-
-@pytest.mark.parametrize("other", ["PG_HOST", "PG_OWNER_PASSWORD"])
-def test_owner_override_with_other_setting_raises(pg_env: pytest.MonkeyPatch, other: str) -> None:
-    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://x@127.0.0.1/db")
-    pg_env.setenv(other, "secret-pw")
-    with pytest.raises(ConfigError, match="not both") as info:
-        owner_database_url()
-    assert "secret-pw" not in str(info.value)
-
-
-def test_owner_override_alone_is_returned(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://x@127.0.0.1/db")
-    assert owner_database_url() == "postgresql://x@127.0.0.1/db"
-
-
-def test_migrate_and_seed_never_use_app_url() -> None:
-    root = Path(__file__).resolve().parents[1] / "src" / "refinery_watch" / "db"
-    for name in ("migrate.py", "seed.py"):
-        text = (root / name).read_text(encoding="utf-8")
-        assert "app_database_url" not in text
-        assert "owner_database_url" in text

@@ -3,10 +3,14 @@
 ## Purpose
 
 refinery-watch keeps a point-in-time history of refinery outages and a satellite flare signal for
-a refined products desk. It reads public news and regulator feeds. The plan is to extract outage
-events with an LLM and send a sourced morning note. It is built to run unattended.
+a refined products desk. It reads public news feeds and EIA weekly data. The plan is to extract
+outage events with an LLM and send a sourced morning note. It is built to run unattended.
 
-Nothing is deployed. No live data is loaded.
+No regulator data is ingested yet. The `tceq_event` table exists and nothing writes to it.
+
+This page describes the merged state: infra/terraform, infra/data-compose, feat/schema,
+feat/adapters, feat/flare-signal, then the docs branches, in that order. Nothing is deployed. No
+live data is loaded.
 
 ## Status
 
@@ -14,22 +18,27 @@ Built:
 
 - Postgres schema and migrations, with the append-only outage store and `outage_as_of`.
 - Seed loaders for sources and refineries.
-- Source adapters: Hydrocarbon Processing RSS, GDELT DOC, EIA weekly utilisation.
+- Source adapters: Hydrocarbon Processing RSS, GDELT DOC, EIA weekly utilisation. As seeded, only
+  the HP and EIA jobs run. GDELT, FIRMS and Overpass stay off until their robots status is checked
+  by hand and set to a clear allow.
 - The keyword pre-filter and refinery name matching.
-- The flare signal, tested on synthetic data and hand-made fixtures.
+- The flare signal, tested on synthetic data and hand-made fixtures. Flare alert sending through
+  Resend is code only and has never been run.
 - Terraform and cloud-init for three Droplets. Compose for the data Droplet.
 
 Specified, not built:
 
 - LLM extraction and the spend cap.
 - The morning note and its email.
-- Scheduling, monitoring and backups.
+- Scheduling and monitoring.
+- Backups: the nightly dump, the second copy and the restore script.
 - Deploy.
 
 ## Droplets
 
 DigitalOcean, London region, one VPC. Cloud firewalls allow SSH on a non-default port from listed
-addresses, 443 on app only, and Postgres on data from the VPC only.
+addresses and 443 on app only. On data, port 5432 is open only to the app and ingest Droplet
+tags. Nothing else is open on data, and port 9000 is closed.
 
 | Droplet | RAM | Role | Runs |
 | --- | --- | --- | --- |
@@ -61,11 +70,12 @@ address.
 
 Raw documents and backups go to Cloudflare R2, over the S3 API
 ([029](decisions/029-cloudflare-r2-object-store.md)). R2 replaces the MinIO plan in
-[008](decisions/008-postgres-and-minio.md). Two buckets:
+[008](decisions/008-postgres-and-minio.md). The code writes to any S3 endpoint. R2 is the chosen
+store, and nothing has been written to it yet. Two buckets:
 
 - raw, at `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`, where `ext` is `html` for article pages
   and `json` for API responses. Ingest writes. App reads.
-- backup, for the nightly dump. Only the data Droplet holds its key.
+- backup, for the nightly dump. Only the data Droplet holds its key. No backup job exists yet.
 
 No object store container runs on any Droplet.
 
@@ -74,8 +84,8 @@ No object store container runs on any Droplet.
 | Where | Container | Limit |
 | --- | --- | --- |
 | data | postgres | 384 MB |
-| ingest | one job at a time, flare fetch | 192 MB |
-| app | flare alert job | 128 MB |
+| ingest | one job at a time, flare fetch | 192 MB, specified (record 031), not set in Compose |
+| app | flare alert job | 128 MB, specified (record 031), not set in Compose |
 
 Postgres is tuned to fit its limit: `shared_buffers` 96 MB, `max_connections` 20, no parallel
 workers. About 640 MB of the data Droplet is left for the OS and Docker. Limits for the other
@@ -84,13 +94,14 @@ stack is written.
 
 ## Data flow
 
-Steps 1 to 3 are built. The rest are specified.
+Steps 1 to 4 are built, and the HP and EIA jobs run as seeded. Steps 5 to 10 are specified.
 
 1. Fetch from public news and regulator feeds. Respect robots.txt and rate limits, send a plain
    User-Agent with a contact email, back off on 429 and 5xx, never evade a block. A source row with
    a robots status that is not a clear allow is refused.
 2. Hash normalised text with SHA-256. Never process the same hash twice.
-3. Write the raw document to R2 and a `raw_document` row to Postgres.
+3. Write the raw document to an S3 endpoint and a `raw_document` row to Postgres. R2 is the
+   chosen store. Nothing has been written to it yet.
 4. Pre-filter with keywords before any model call.
 5. Check the daily spend cap.
 6. Extract with Claude Haiku. Log tokens and cost on every call.
@@ -137,8 +148,11 @@ Method and limits: [flare-lead-time.md](research/flare-lead-time.md).
 
 ## Undecided
 
+- Which Droplet runs extraction and the note job.
+- Whether cron runs on the host or in a container.
+- Which service sends the note, and what its idempotency rule is.
 - Whether the spend cap day runs on UTC or Asia/Dubai.
 - What the 06:00 note does if the cap is already spent.
-- How deploys reach the VMs.
-- Memory limits on app and ingest, beyond the two jobs above.
+- How deploys reach the VMs. A draft record exists off this lineage and is not settled here.
+- Memory limits on app and ingest, beyond the two jobs above. Where to set them is open.
 - The open decisions listed in [docs/definitions.md](definitions.md).

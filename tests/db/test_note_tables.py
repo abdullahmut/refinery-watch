@@ -184,6 +184,6 @@ def test_app_role_can_call_the_spend_function(db: Conn, app_db: Conn) -> None:
     assert row == {"p": False}
 
 
-def test_head_revision_is_0008(db: Conn, session_schema: str) -> None:
+def test_head_revision_is_0009(db: Conn, session_schema: str) -> None:
     row = db.execute(f"SELECT version_num FROM {session_schema}.alembic_version").fetchone()
-    assert row == {"version_num": "0008"}
+    assert row == {"version_num": "0009"}

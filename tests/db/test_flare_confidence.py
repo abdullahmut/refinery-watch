@@ -385,3 +385,14 @@ def test_a_closed_outage_is_listed_only_when_near(db: Conn) -> None:
     near = evidence_as_of(db, "R9001", date(2026, 8, 3), LATER)
     assert [i.kind for i in near] == ["outage_near", "outage_near"]
     assert {i.event_type for i in near} == {"unplanned", "restart"}
+
+
+def test_each_evidence_item_appears_once_with_its_kind(db: Conn) -> None:
+    inside = lift_candidate(db, start_date=date(2026, 10, 9))
+    outside = lift_candidate(
+        db, start_date=date(2026, 10, 8), refinery_unit_id=unit_id(db, "R9001", "VDU")
+    )
+    items = evidence_as_of(db, "R9001", date(2026, 10, 12), LATER)
+    assert sorted((i.ref_id, i.kind) for i in items) == sorted(
+        [(inside, "outage_near"), (outside, "outage_open")]
+    )

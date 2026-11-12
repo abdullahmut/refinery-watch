@@ -241,3 +241,26 @@ def test_score_write_days_goes_in_date_order_and_counts_rows(private_app: Conn) 
     ids = conn.execute("SELECT day FROM flare_day ORDER BY id").fetchall()
     assert [r["day"] for r in ids] == days
     assert write_days(conn, ["R9001"], days, False, found["id"]) == 0
+
+
+def test_a_revision_of_a_day_is_not_in_its_own_baseline(app_db: Conn) -> None:
+    fp = history(app_db, [None] * 10 + [0.0] * 80)
+    seed_days(app_db, fp, TARGET, [12.0])
+    write_day(app_db, TARGET)
+    first = current_day(app_db, TARGET)
+    add_detection(app_db, fp, TARGET, 50.0, add_document(app_db, 7101), minute=30)
+    assert write_day(app_db, TARGET) is not None
+    second = current_day(app_db, TARGET)
+    assert (first["baseline_days"], second["baseline_days"]) == (80, 80)
+
+
+def test_sp_with_the_same_figures_still_writes_a_row(app_db: Conn) -> None:
+    fp = add_footprint(app_db)
+    doc = add_document(app_db, 7102)
+    add_coverage(app_db, FIRST, doc, product="NRT")
+    add_detection(app_db, fp, FIRST, 3.0, doc, satellite="SNPP", product="NRT")
+    write_day(app_db, FIRST)
+    add_coverage(app_db, FIRST, doc, satellites=("SNPP",), product="SP")
+    add_detection(app_db, fp, FIRST, 3.0, doc, satellite="SNPP", product="SP", minute=5)
+    assert write_day(app_db, FIRST) is not None
+    assert current_day(app_db, FIRST)["products"] == ["NOAA20:NRT", "SNPP:SP"]

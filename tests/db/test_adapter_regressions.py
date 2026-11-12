@@ -206,7 +206,7 @@ def test_cli_exits_1_when_the_run_row_was_lost(
     from refinery_watch.sources import __main__ as cli
 
     env = {
-        "DATABASE_URL": f"{app_url}?options={quote(f'-c search_path={seeded_schema}')}",
+        "APP_DATABASE_URL": f"{app_url}?options={quote(f'-c search_path={seeded_schema}')}",
         "CONTACT_EMAIL": "contact@example.com",
         "OBJECT_STORE_ENDPOINT": "https://store.example.com",
         "OBJECT_STORE_REGION": "test-1",

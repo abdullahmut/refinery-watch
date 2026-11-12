@@ -40,7 +40,7 @@ def transport() -> httpx.MockTransport:
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch, seeded_schema: str, app_url: str) -> pytest.MonkeyPatch:
     options = quote(f"-c search_path={seeded_schema}")
-    monkeypatch.setenv("DATABASE_URL", f"{app_url}?options={options}")
+    monkeypatch.setenv("APP_DATABASE_URL", f"{app_url}?options={options}")
     monkeypatch.setenv("CONTACT_EMAIL", "contact@example.com")
     monkeypatch.setenv("OBJECT_STORE_ENDPOINT", "https://store.example.com")
     monkeypatch.setenv("OBJECT_STORE_REGION", "test-1")
@@ -100,7 +100,7 @@ def test_missing_source_exits_1_with_the_message(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     options = quote(f"-c search_path={fresh_schema}")
-    env.setenv("DATABASE_URL", f"{app_url}?options={options}")
+    env.setenv("APP_DATABASE_URL", f"{app_url}?options={options}")
     code = cli.main(["gdelt_doc"], transport=transport(), resolve=public, store=FakeStore())
     assert code == 1
     assert "source gdelt_doc not loaded; run the source seed loader" in capsys.readouterr().out

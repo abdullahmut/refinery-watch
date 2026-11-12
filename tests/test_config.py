@@ -14,7 +14,18 @@ from refinery_watch.config import (
     refineries_csv_path,
 )
 
-PG_VARS = ("DATABASE_URL", "PG_HOST", "PG_PORT", "PG_DATABASE", "PG_APP_USER", "PG_APP_PASSWORD")
+PG_VARS = (
+    "APP_DATABASE_URL",
+    "OWNER_DATABASE_URL",
+    "DATABASE_URL",
+    "PG_HOST",
+    "PG_PORT",
+    "PG_DATABASE",
+    "PG_APP_USER",
+    "PG_APP_PASSWORD",
+    "PG_OWNER_USER",
+    "PG_OWNER_PASSWORD",
+)
 
 
 @pytest.fixture
@@ -57,18 +68,47 @@ def test_url_missing_value_names_variable(pg_env: pytest.MonkeyPatch, missing: s
     assert "secret-pw" not in str(info.value)
 
 
-def test_url_both_set_raises_without_echoing_password(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
-    pg_env.setenv("PG_HOST", "h")
-    pg_env.setenv("PG_APP_PASSWORD", "secret-pw")
+@pytest.mark.parametrize("other", ["PG_HOST", "PG_APP_PASSWORD"])
+def test_url_override_with_other_setting_raises(pg_env: pytest.MonkeyPatch, other: str) -> None:
+    pg_env.setenv("APP_DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    pg_env.setenv(other, "secret-pw")
     with pytest.raises(ConfigError, match="not both") as info:
         app_database_url()
     assert "secret-pw" not in str(info.value)
 
 
-def test_database_url_alone_is_returned(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
+def test_app_override_alone_is_returned(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("APP_DATABASE_URL", "postgresql://x@127.0.0.1/db")
     assert app_database_url() == "postgresql://x@127.0.0.1/db"
+
+
+def test_plain_database_url_is_ignored(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    with pytest.raises(ConfigError, match="PG_HOST"):
+        app_database_url()
+    with pytest.raises(ConfigError, match="PG_HOST"):
+        owner_database_url()
+
+
+def test_app_override_cannot_reach_owner_path(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("APP_DATABASE_URL", "postgresql://app@127.0.0.1/db")
+    with pytest.raises(ConfigError, match="PG_HOST"):
+        owner_database_url()
+
+
+def test_owner_override_cannot_reach_app_path(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://owner@127.0.0.1/db")
+    with pytest.raises(ConfigError, match="PG_HOST"):
+        app_database_url()
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "99999", "123456"])
+def test_port_out_of_range_rejected(pg_env: pytest.MonkeyPatch, port: str) -> None:
+    pg_env.setenv("PG_HOST", "h")
+    pg_env.setenv("PG_APP_PASSWORD", "pw")
+    pg_env.setenv("PG_PORT", port)
+    with pytest.raises(ConfigError, match="PG_PORT"):
+        app_database_url()
 
 
 @pytest.mark.parametrize(("name", "value"), [("PG_PORT", "54x"), ("PG_HOST", "a/b")])
@@ -262,13 +302,18 @@ def test_owner_url_missing_password_names_variable(pg_env: pytest.MonkeyPatch) -
     assert "app-pw" not in str(info.value)
 
 
-def test_owner_url_both_set_raises(pg_env: pytest.MonkeyPatch) -> None:
-    pg_env.setenv("DATABASE_URL", "postgresql://x@127.0.0.1/db")
-    pg_env.setenv("PG_HOST", "h")
-    pg_env.setenv("PG_OWNER_PASSWORD", "secret-pw")
+@pytest.mark.parametrize("other", ["PG_HOST", "PG_OWNER_PASSWORD"])
+def test_owner_override_with_other_setting_raises(pg_env: pytest.MonkeyPatch, other: str) -> None:
+    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    pg_env.setenv(other, "secret-pw")
     with pytest.raises(ConfigError, match="not both") as info:
         owner_database_url()
     assert "secret-pw" not in str(info.value)
+
+
+def test_owner_override_alone_is_returned(pg_env: pytest.MonkeyPatch) -> None:
+    pg_env.setenv("OWNER_DATABASE_URL", "postgresql://x@127.0.0.1/db")
+    assert owner_database_url() == "postgresql://x@127.0.0.1/db"
 
 
 def test_migrate_and_seed_never_use_app_url() -> None:

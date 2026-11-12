@@ -20,7 +20,7 @@ def test_a_bad_fetch_ipv6_exits_before_any_job_run_row(
     monkeypatch: pytest.MonkeyPatch, seeded_schema: str, app_url: str, pg_server: str
 ) -> None:
     options = quote(f"-c search_path={seeded_schema}")
-    monkeypatch.setenv("DATABASE_URL", f"{app_url}?options={options}")
+    monkeypatch.setenv("APP_DATABASE_URL", f"{app_url}?options={options}")
     monkeypatch.setenv("CONTACT_EMAIL", "contact@example.com")
     monkeypatch.setenv("OBJECT_STORE_ENDPOINT", "https://store.example.com")
     monkeypatch.setenv("OBJECT_STORE_REGION", "test-1")

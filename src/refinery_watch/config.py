@@ -18,21 +18,21 @@ def _required(name: str) -> str:
     return value
 
 
-def _database_url(user_var: str, default_user: str, password_var: str) -> str:
-    explicit = os.environ.get("DATABASE_URL", "")
-    password = os.environ.get(password_var, "")
-    if explicit and password:
-        raise ConfigError(f"set DATABASE_URL or {password_var}, not both")
+def _database_url(override_var: str, user_var: str, default_user: str, password_var: str) -> str:
+    explicit = os.environ.get(override_var, "")
     if explicit:
+        if os.environ.get("PG_HOST") or os.environ.get(password_var):
+            raise ConfigError(f"set {override_var} or PG_HOST with {password_var}, not both")
         return explicit
     host = _required("PG_HOST")
     if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
         raise ConfigError("PG_HOST must be a host name or IPv4 address")
     port = os.environ.get("PG_PORT") or "5432"
-    if not re.fullmatch(r"[0-9]{1,5}", port):
-        raise ConfigError("PG_PORT must be a number")
+    if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
+        raise ConfigError("PG_PORT must be a number from 1 to 65535")
     database = os.environ.get("PG_DATABASE") or "refinery_watch"
     user = os.environ.get(user_var) or default_user
+    password = os.environ.get(password_var, "")
     if not password:
         raise ConfigError(f"{password_var} is not set")
     return (
@@ -42,17 +42,19 @@ def _database_url(user_var: str, default_user: str, password_var: str) -> str:
 
 
 def app_database_url() -> str:
-    """Build the app role URL from PG_* settings. DATABASE_URL is the only other source."""
-    return _database_url("PG_APP_USER", "refinery_app", "PG_APP_PASSWORD")
+    """Build the app role URL from PG_* settings. APP_DATABASE_URL is the only override."""
+    return _database_url("APP_DATABASE_URL", "PG_APP_USER", "refinery_app", "PG_APP_PASSWORD")
 
 
 def owner_database_url() -> str:
     """Build the owner role URL for migrations and seeds.
 
-    PG_OWNER_PASSWORD is supplied in the environment at run time by the operator.
-    It is never stored in the app or ingest .env.
+    OWNER_DATABASE_URL is the only override. PG_OWNER_PASSWORD is supplied in the
+    environment at run time by the operator. It is never stored in the app or ingest .env.
     """
-    return _database_url("PG_OWNER_USER", "refinery_owner", "PG_OWNER_PASSWORD")
+    return _database_url(
+        "OWNER_DATABASE_URL", "PG_OWNER_USER", "refinery_owner", "PG_OWNER_PASSWORD"
+    )
 
 
 def refineries_csv_path() -> Path:

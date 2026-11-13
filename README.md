@@ -117,9 +117,11 @@ make up                 # Postgres on 127.0.0.1:5432
 make down
 ```
 
-Copy `.env.example` to `.env` before `make up`. It lists every key the code reads, with empty
-values. The local stack needs `POSTGRES_PASSWORD`, `PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. The
-`OBJECT_STORE_BACKUP_*` keys are for the backup job, which is not built yet. Never commit `.env`.
+Copy `.env.example` to `.env` before `make up`. It lists every key the code reads. Secrets are empty and defaults are
+filled in. The local stack needs `POSTGRES_PASSWORD`, `PG_OWNER_PASSWORD` and `PG_APP_PASSWORD`. The
+`OBJECT_STORE_BACKUP_*` keys are for the backup job, which is not built yet. So are
+`ANTHROPIC_API_KEY`, `SENTRY_DSN`, `ALERT_EMAIL_TO` and `DAILY_COST_CAP_USD`, which are for
+extraction, monitoring and the cost cap. No code reads them. Never commit `.env`.
 
 Every key `config.py` reads:
 

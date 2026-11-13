@@ -7,12 +7,13 @@ commands and how to verify.
 
 - [Provision a fresh stack](#provision-a-fresh-stack): no Droplets, or a rebuild.
 - [SSH unreachable after first boot](#ssh-unreachable-after-first-boot): timeout or refusal.
-- [Start Postgres on the data VM](#start-postgres-on-the-data-vm): new data Droplet.
+- [Start Postgres on the data Droplet](#start-postgres-on-the-data-droplet): new data Droplet.
 - [Postgres down after a reboot](#postgres-down-after-a-reboot): container exited.
 - [How each job connects to Postgres](#how-each-job-connects-to-postgres): which role, which
   variables, where the owner password lives.
 - [Rotate a database password](#rotate-a-database-password): leaked or due.
 - [Reset the laptop database](#reset-the-laptop-database): clean local start.
+- [Create the R2 buckets and tokens](#create-the-r2-buckets-and-tokens): first object store setup.
 - [Flare signal](#flare-signal): first setup, and when a flare job fails.
 
 ## Provision a fresh stack
@@ -588,7 +589,7 @@ Run these in order, by hand.
    than 1,000 quiet scored plant-days.
 6. `python -m refinery_watch.flare alert` on app. This is a dry run. It prints the subject and body
    of each alert that would go out, and writes and sends nothing. Read the output.
-7. Ask platform to add the cron lines: `flare fetch` on ingest every 3 hours at minute 40 under the
+7. Add the cron lines: `flare fetch` on ingest every 3 hours at minute 40 under the
    ingest job lock, and `flare alert --send` on app every 30 minutes with its own lock and a 128 MB
    limit.
 
@@ -615,5 +616,5 @@ Exit codes: 0 ok, 1 failed, 2 setting or usage, 3 refused. Each job writes a `jo
 ### Limits
 
 The fetch holds one FIRMS reply at a time, 5 MB at most, inside the 192 MB container limit specified
-for each ingest job, which is not set in Compose yet. Nothing else runs at the same time. The alert job runs on app with a
-128 MB limit. No statistics run in Python.
+for each ingest job, which is not set in Compose yet. Nothing else runs at the same time. The
+alert job runs on app with a 128 MB limit. No statistics run in Python.

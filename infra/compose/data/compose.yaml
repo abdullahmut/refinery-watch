@@ -1,0 +1,73 @@
+name: refinery-watch-data
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16.15-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9
+    restart: always
+    mem_limit: 384m
+    memswap_limit: 384m
+    stop_grace_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set}
+      PG_OWNER_PASSWORD: ${PG_OWNER_PASSWORD:?PG_OWNER_PASSWORD is not set}
+      PG_APP_PASSWORD: ${PG_APP_PASSWORD:?PG_APP_PASSWORD is not set}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/initdb/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    command:
+      - postgres
+      - -c
+      - shared_buffers=96MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - autovacuum_max_workers=2
+      - -c
+      - autovacuum_work_mem=16MB
+      - -c
+      - max_connections=15
+      - -c
+      - superuser_reserved_connections=3
+      - -c
+      - hash_mem_multiplier=1
+      - -c
+      - temp_buffers=1MB
+      - -c
+      - max_parallel_workers_per_gather=0
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - timezone=UTC
+      - -c
+      - log_timezone=UTC
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    # Fails during init, when the server listens on no address, and when the app
+    # role is missing.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          gosu postgres psql -h /var/run/postgresql -U postgres -d postgres -tAc
+          "select 1 from pg_roles where rolname='refinery_app'
+          and current_setting('listen_addresses') <> ''" | grep -q 1
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+volumes:
+  pgdata:

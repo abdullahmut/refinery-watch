@@ -208,3 +208,253 @@ above, on a box that holds no data.
 
 Verify: from the laptop, `ssh -p <ssh_port> deploy@<public ip>` logs in, and
 `nc -vz -w 5 <public ip> 22` times out.
+
+## Start Postgres on the data Droplet
+
+Symptom: the data Droplet is new, or Postgres is not running and nothing has started it.
+
+Likely cause: first setup. Nothing starts the stack by itself the first time.
+
+Put `.env` in `/opt/refinery-watch`, owned by `deploy`, mode `0600`. Set `POSTGRES_PASSWORD`,
+`PG_OWNER_PASSWORD` and `PG_APP_PASSWORD` to fresh values from `openssl rand -hex 24`. Set
+`DATA_BIND_ADDR` to `private_ipv4["data"]` from `terraform output private_ipv4`. It must start
+with the VPC prefix `10.110.0.`. Any other value is a mistake: Postgres only accepts clients from
+`10.110.0.0/24`. Then, on the Droplet:
+
+```
+cd /opt/refinery-watch
+stat -c '%U %a' .env
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml up -d --wait
+```
+
+`stat` must print `deploy 600`. If `DATA_BIND_ADDR` is empty, Compose stops and says to set it.
+
+Verify:
+
+```
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml ps
+ss -ltn | grep 5432
+docker stats --no-stream
+free -m
+```
+
+- `ps` shows `postgres` as `healthy`. The check needs the `refinery_app` role, so `unhealthy` after
+  a first start means the init script failed. Read `docker compose ... logs postgres`, then see
+  the reset rule below.
+- `ss` shows 5432 on the private address only, never `0.0.0.0` or `*`.
+- `docker stats` shows memory under the 384 MiB limit.
+- Write down the `available` column of `free -m`. It must be at least 500 MB.
+
+Recorded value: none yet.
+
+If the first init failed, the data volume now holds a cluster without roles and the script will
+not run again. On a Droplet with no data yet, first check that the database is empty. This must
+print `0`:
+
+```
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -u postgres postgres psql -d postgres -tAc "select count(*) from pg_database where datname='refinery_watch'"
+```
+
+If it prints anything else, stop. Then run `docker compose ... down`, then
+`docker volume rm refinery-watch-data_pgdata`, fix the cause and run `up` again. Never do this
+once the database holds data.
+
+## Postgres down after a reboot
+
+Symptom: after a reboot, `docker ps` does not list `postgres`, or `ps` shows it exited.
+
+Likely cause: Docker started before the private address was up, so the port bind failed. The
+restart policy does not retry a failed bind.
+
+Fix, on the Droplet:
+
+```
+cd /opt/refinery-watch
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml up -d --wait
+```
+
+Verify as in the entry above: `postgres` is `healthy` and `ss -ltn | grep 5432` shows the private
+address. If `up` still fails on the bind, check `ip -4 addr show eth1` for the private address and
+compare it with `DATA_BIND_ADDR`.
+
+## Rotate a database password
+
+Symptom: a password leaked or must change. The init script does not run again, so editing `.env`
+alone changes nothing inside Postgres.
+
+Likely cause: roles are created once, on an empty data volume.
+
+Edit `.env` first. Then load it in a subshell, so the passwords are gone from your shell when it
+ends, and set the new password inside Postgres. The
+value travels in the environment and on stdin. It is never in a command line, and the session does
+not log failed statements. Example for the app role, on the Droplet:
+
+```
+cd /opt/refinery-watch
+(
+set -a; . ./.env; set +a
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -e PG_APP_PASSWORD -u postgres postgres psql -v ON_ERROR_STOP=1 -d postgres <<'SQL'
+SET log_min_error_statement TO panic;
+\set VERBOSITY terse
+\getenv pw PG_APP_PASSWORD
+ALTER ROLE refinery_app PASSWORD :'pw';
+SQL
+)
+```
+
+For the owner role, use `refinery_owner` and `PG_OWNER_PASSWORD` in both places. Then run the `up
+-d` command from the start entry again, so the container environment matches `.env`. Restart every
+service that connects as that role, so it reads the new value.
+
+Verify. Type the new password at the prompt. Nothing is echoed or stored in history:
+
+```
+read -rs PGPASSWORD && export PGPASSWORD
+docker compose --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.vpc.yaml exec -T -e PGPASSWORD postgres psql -U refinery_app -d refinery_watch -c 'select 1'
+unset PGPASSWORD
+```
+
+The output shows one row. Then run the same three lines again and type the old password. The
+output must say `password authentication failed for user "refinery_app"`.
+
+## Reset the laptop database
+
+Symptom: the laptop database needs a clean start, or the test roles are missing because the volume
+was created before `20-test-roles.sql` existed. Init scripts run only on an empty volume.
+
+Likely cause: the volume `refinery-watch-local_pgdata` already holds an older cluster. The laptop
+stack runs as project `refinery-watch-local`, so it never shares a volume with the Droplet stack.
+
+Laptop only. Never on the Droplet: this deletes all data.
+
+```
+make down
+docker volume rm refinery-watch-local_pgdata
+make up
+```
+
+An older laptop volume named `refinery-watch-data_pgdata` is no longer used. Remove it with
+`docker volume rm refinery-watch-data_pgdata` if it exists.
+
+Verify, over the container's own socket:
+
+```
+docker compose -p refinery-watch-local --env-file .env -f infra/compose/data/compose.yaml -f infra/compose/data/compose.local.yaml exec -T -e PGPASSWORD=refinery_test_owner postgres psql -U refinery_test_owner -d refinery_watch_test -c 'select 1'
+```
+
+The output shows one row with `1`.
+
+## Create the R2 buckets and tokens
+
+Symptom: raw documents or backups fail to upload, or the object store has never been set up.
+
+Likely cause: first setup, a deleted bucket, or an expired token.
+
+In the Cloudflare dashboard, open R2 and create two buckets: `refinery-watch-raw` and
+`refinery-watch-backup`. Keep both private. Do not enable public access.
+
+Create three R2 API tokens under R2, Manage API tokens. Do not choose Admin or an account-wide
+scope.
+
+- Ingest raw token: Object Read & Write on `refinery-watch-raw` only. It lives on the ingest
+  Droplet.
+- App raw token: Object Read on `refinery-watch-raw` only. It lives on the app Droplet. It uses the
+  same `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` names, with its own value.
+- Backup token: Object Read & Write on `refinery-watch-backup` only. It lives on the data Droplet
+  only, in `OBJECT_STORE_BACKUP_ACCESS_KEY` and `OBJECT_STORE_BACKUP_SECRET_KEY`. R2 has no object
+  lock, so write access is also delete access. A break-in on the data Droplet can erase the
+  backups. Keeping the token off ingest and app means a break-in there cannot.
+
+Add a lifecycle rule on `refinery-watch-backup` under Settings, Object lifecycle rules. Delete
+objects under `daily/` after 14 days. Delete objects under `monthly/` after 400 days, about 13
+months. This matches record 033.
+
+Set a 90-day TTL on all three. An expired backup token stops backups silently unless the backup
+heartbeat alerts, so rotate before expiry. Copy each access key ID and secret once, straight into
+`.env`. The secret is not shown again.
+
+On each Droplet, add only the values for the token it holds. The laptop `.env` holds no backup key.
+It needs no object store values at all unless you read raw documents locally. In that case give it
+the app read-only raw token and nothing else. `OBJECT_STORE_BACKUP_*` exists only in the data
+Droplet's `.env`. Write the values in an editor, never with `echo` or `export` on a command line:
+
+```
+OBJECT_STORE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+OBJECT_STORE_REGION=auto
+OBJECT_STORE_BUCKET_RAW=refinery-watch-raw
+OBJECT_STORE_ACCESS_KEY=<raw token access key id>
+OBJECT_STORE_SECRET_KEY=<raw token secret>
+OBJECT_STORE_BUCKET_BACKUP=refinery-watch-backup
+OBJECT_STORE_BACKUP_ACCESS_KEY=<backup token access key id>
+OBJECT_STORE_BACKUP_SECRET_KEY=<backup token secret>
+```
+
+Verify on each Droplet with the token it holds. Ingest runs a put and a get with the raw
+read-write token. App runs the get only with its read-only token, after the ingest put, and does not
+delete the object. The data Droplet runs a put and a get with the backup token. The shell expands the
+keys into a here-document that curl reads from stdin, so neither key appears in a command line or in
+the process list. Run it in a subshell so the values are gone afterwards.
+
+Ingest:
+
+```
+(
+set -a; . ./.env; set +a
+f=$(mktemp)
+printf 'runbook check' > "$f"
+curl -sS -f -K - -X PUT -T "$f" "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+curl -sS -f -K - "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+rm -f "$f"
+)
+```
+
+App, get only:
+
+```
+(
+set -a; . ./.env; set +a
+curl -sS -f -K - "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_RAW/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_ACCESS_KEY:$OBJECT_STORE_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+)
+```
+
+Data Droplet, backup token:
+
+```
+(
+set -a; . ./.env; set +a
+f=$(mktemp)
+printf 'runbook check' > "$f"
+curl -sS -f -K - -X PUT -T "$f" "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_BACKUP/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_BACKUP_ACCESS_KEY:$OBJECT_STORE_BACKUP_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+curl -sS -f -K - "$OBJECT_STORE_ENDPOINT/$OBJECT_STORE_BUCKET_BACKUP/runbook/check.txt" <<CFG
+user = "$OBJECT_STORE_BACKUP_ACCESS_KEY:$OBJECT_STORE_BACKUP_SECRET_KEY"
+aws-sigv4 = "aws:amz:$OBJECT_STORE_REGION:s3"
+header = "x-amz-content-sha256: UNSIGNED-PAYLOAD"
+CFG
+rm -f "$f"
+)
+```
+
+A put prints nothing and a get prints `runbook check`. On app, a `403` on a put is expected, because
+the token is read-only. On ingest and data, a `403` means the token scope or the keys are wrong. A
+`404` on a put means the bucket name in `.env` does not match the bucket. Delete the
+`runbook/check.txt` object in each bucket in the dashboard afterwards.
+
+To rotate a token, create a new one with the same scope and TTL, edit `.env`, repeat the check,
+then delete the old token in the dashboard. The ingest check covers the ingest raw token. The app
+check covers the app read-only token. The data check covers the backup token.

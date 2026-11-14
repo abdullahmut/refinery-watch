@@ -1,0 +1,4 @@
+services:
+  postgres:
+    ports:
+      - "${DATA_BIND_ADDR:?set DATA_BIND_ADDR to the data Droplet private IP}:5432:5432"

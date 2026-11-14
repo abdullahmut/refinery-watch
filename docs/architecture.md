@@ -13,20 +13,20 @@ DigitalOcean, London region, one VPC.
 | Droplet | RAM | Runs |
 | --- | --- | --- |
 | ingest | 512 MB | source fetch jobs |
-| data | 1 GB | Postgres and MinIO |
+| data | 1 GB | Postgres |
 | app | 1 GB | dashboard and read API behind Caddy; the only Droplet exposing 443 |
 
 ## Storage
 
-Postgres is the only database. MinIO holds raw documents at
-`raw/{source}/{yyyy}/{mm}/{dd}/{sha}.html`.
+Postgres is the only database. Cloudflare R2, over the S3 API, holds raw documents and backups.
+Raw documents go to `raw/{source}/{yyyy}/{mm}/{dd}/{sha}.{ext}`.
 
 ## Data flow
 
 1. Fetch from public news and regulator feeds. Respect robots.txt and rate limits, send a plain
    User-Agent with a contact email, back off on 429 and 5xx, never evade a block.
 2. Hash normalised content with SHA-256. Never process the same hash twice.
-3. Write the raw document to MinIO and a `raw_document` row to Postgres.
+3. Write the raw document to R2 and a `raw_document` row to Postgres.
 4. Pre-filter with keywords before any model call.
 5. Check the daily spend cap.
 6. Extract with Claude Haiku. Log tokens and cost on every call.
@@ -56,10 +56,10 @@ Postgres is the only database. MinIO holds raw documents at
 - Whether the spend cap day runs on UTC or Asia/Dubai: undecided.
 - What the 06:00 note does if the cap is already spent: undecided.
 - Which service sends the note: undecided.
-- Memory limits per container, including how Postgres and MinIO share 1 GB: undecided.
+- Memory limits on the data Droplet: Postgres 384 MB. No object store runs there; see
+  [029](decisions/029-cloudflare-r2-object-store.md). Limits on app and ingest: undecided.
 - How deploys reach the VMs: undecided.
-- Where the second backup copy lives: undecided. It must be off the data Droplet to survive losing
-  it.
+- Where the second backup copy lives: the R2 backup bucket, off DigitalOcean (029).
 - Where Terraform state lives: local, see [006](decisions/006-terraform-state-location.md).
 - The seven open decisions listed in [docs/definitions.md](definitions.md): undecided.
 - Open for the `outage_event` schema spec. A `supersedes` column on the new row points at the row

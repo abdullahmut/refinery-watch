@@ -117,7 +117,7 @@ def test_sources_multiline_cell_keeps_line_numbers(fresh_db: Conn, tmp_path: Pat
 
 
 def test_real_source_list_loads(fresh_db: Conn) -> None:
-    assert load_sources(fresh_db, ROOT / "data" / "sources.csv").inserted == 21
+    assert load_sources(fresh_db, ROOT / "data" / "sources.csv").inserted == 22
 
 
 def schema_connector(url: str, schema: str) -> Callable[[str], Conn]:
@@ -134,7 +134,7 @@ def test_main_sources(
     fresh_schema: str,
     fresh_db: Conn,
 ) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1/none")
+    monkeypatch.setenv("OWNER_DATABASE_URL", "postgresql://unused@127.0.0.1/none")
     monkeypatch.setattr(seed, "connect", schema_connector(pg_server, fresh_schema))
     assert seed.main(["sources", "--csv", str(FIXTURES / "sources_small.csv")]) == 0
     assert "inserted=3" in capsys.readouterr().out
@@ -147,10 +147,12 @@ def test_main_errors_exit_nonzero(
     pg_server: str,
     fresh_schema: str,
 ) -> None:
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("OWNER_DATABASE_URL", raising=False)
+    monkeypatch.delenv("PG_HOST", raising=False)
+    monkeypatch.delenv("PG_OWNER_PASSWORD", raising=False)
     assert seed.main(["sources"]) == 2
-    assert "DATABASE_URL" in capsys.readouterr().err
-    monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1/none")
+    assert "PG_HOST" in capsys.readouterr().err
+    monkeypatch.setenv("OWNER_DATABASE_URL", "postgresql://unused@127.0.0.1/none")
     monkeypatch.setattr(seed, "connect", schema_connector(pg_server, fresh_schema))
     assert seed.main(["sources", "--csv", "no/such/file.csv"]) == 2
     assert "seed:" in capsys.readouterr().err
@@ -318,7 +320,7 @@ def test_main_refineries(
     fresh_schema: str,
     fresh_db: Conn,
 ) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1/none")
+    monkeypatch.setenv("OWNER_DATABASE_URL", "postgresql://unused@127.0.0.1/none")
     monkeypatch.setenv("REFINERIES_CSV_PATH", str(FIXTURES / "refineries_small.csv"))
     monkeypatch.setattr(seed, "connect", schema_connector(pg_server, fresh_schema))
     assert seed.main(["refineries"]) == 0
@@ -329,7 +331,7 @@ def test_main_refineries(
 def test_main_refineries_without_path_names_variable(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1/none")
+    monkeypatch.setenv("OWNER_DATABASE_URL", "postgresql://unused@127.0.0.1/none")
     monkeypatch.delenv("REFINERIES_CSV_PATH", raising=False)
     assert seed.main(["refineries"]) == 2
     assert "REFINERIES_CSV_PATH" in capsys.readouterr().err

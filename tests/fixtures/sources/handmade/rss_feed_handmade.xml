@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Invented refining feed</title>
+    <link>https://hp.example.com/</link>
+    <description>Hand-made sample in RSS 2.0 format.</description>
+    <item>
+      <title>Testville Refinery crude unit shut after fire</title>
+      <link>https://hp.example.com/news/testville-fire?utm_source=feed&amp;utm_medium=rss</link>
+      <guid isPermaLink="false">hand-1</guid>
+      <pubDate>Tue, 10 Nov 2026 20:00:00 +0800</pubDate>
+      <description>Invented summary.</description>
+    </item>
+    <item>
+      <title>Samplebay unit restart planned</title>
+      <link>https://hp.example.com/news/samplebay-restart</link>
+      <guid isPermaLink="false">hand-2</guid>
+      <pubDate>Tue, 10 Nov 2026 14:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Turnaround round-up for November</title>
+      <link>https://hp.example.com/news/turnaround-roundup</link>
+      <guid isPermaLink="false">hand-3</guid>
+    </item>
+  </channel>
+</rss>

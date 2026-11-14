@@ -8,7 +8,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from refinery_watch.config import ConfigError, database_url
+from refinery_watch.config import ConfigError, owner_database_url
 from refinery_watch.db.migrations.params import check_identifier
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
@@ -42,7 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--app-role", default="refinery_app")
     args = parser.parse_args(argv)
     try:
-        upgrade(database_url(), app_role=args.app_role)
+        upgrade(owner_database_url(), app_role=args.app_role)
     except (ConfigError, ValueError) as exc:
         sys.stderr.write(f"migrate: {exc}\n")
         return 2

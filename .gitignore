@@ -46,3 +46,8 @@ data/raw/
 *.log
 .DS_Store
 Thumbs.db
+
+# Real fetched source fixtures stay local. Hand-made samples are committed.
+tests/fixtures/sources/hp_rss/
+tests/fixtures/sources/gdelt/
+tests/fixtures/sources/eia/

@@ -1,0 +1,20 @@
+{
+  "response": {
+    "total": "5",
+    "dateFormat": "YYYY-MM-DD",
+    "frequency": "weekly",
+    "data": [
+      {"period": "2026-11-06", "series": "TESTSERIES1", "value": "90.1", "units": "percent"},
+      {"period": "2026-11-06", "series": "TESTSERIES2", "value": 16200, "units": "kbd"},
+      {"period": "2026-10-30", "series": "TESTSERIES1", "value": null, "units": "percent"},
+      {"period": "2026-10-30", "series": "TESTSERIES2", "value": "16150.5", "units": "kbd"},
+      {"period": "2026-11-06", "series": "OTHERSERIES9", "value": "1.0", "units": "percent"}
+    ],
+    "description": "Invented sample in the documented API v2 shape."
+  },
+  "request": {
+    "command": "/v2/petroleum/pnp/wiup/data/",
+    "params": {"api_key": "HANDMADEKEY123", "frequency": "weekly"}
+  },
+  "apiVersion": "2.1.0"
+}

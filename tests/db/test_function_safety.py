@@ -20,6 +20,7 @@ MIGRATIONS = (
     "r0005_insert_rules",
     "r0007_dedupe_functions",
     "r0008_note_price_tceq",
+    "r0009_flare_signal",
 )
 
 INSERT = (

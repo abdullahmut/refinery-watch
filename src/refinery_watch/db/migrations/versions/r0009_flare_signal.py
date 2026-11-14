@@ -2,7 +2,7 @@
 
 from alembic import op
 
-from refinery_watch.db.migrations.params import grant, revoke
+from refinery_watch.db.migrations.params import grant, pin_search_path, revoke
 
 revision = "0009"
 down_revision = "0008"
@@ -486,16 +486,26 @@ EVIDENCE_FUNCTIONS = [
     """,
 ]
 
-TRIGGER_FUNCTION_NAMES = (
-    "flare_stamp_known_at(), plant_footprint_before_insert(), flare_day_before_insert(),"
-    " flare_alert_before_insert(), flare_alert_attempt_before_insert()"
+TRIGGER_FUNCTION_SIGNATURES = (
+    "flare_stamp_known_at()",
+    "plant_footprint_before_insert()",
+    "flare_day_before_insert()",
+    "flare_alert_before_insert()",
+    "flare_alert_attempt_before_insert()",
 )
-SQL_FUNCTION_NAMES = (
-    "footprint_current_as_of(timestamptz), flare_day_current_as_of(timestamptz),"
-    " flare_threshold_as_of(text, timestamptz), flare_day_figures(text, date, timestamptz),"
-    " flare_baseline(text, date, timestamptz), flare_day_write(text, date, boolean, bigint),"
-    " outage_confidence_as_of(timestamptz), flare_evidence_as_of(text, date, timestamptz)"
+SQL_FUNCTION_SIGNATURES = (
+    "footprint_current_as_of(timestamptz)",
+    "flare_day_current_as_of(timestamptz)",
+    "flare_threshold_as_of(text, timestamptz)",
+    "flare_day_figures(text, date, timestamptz)",
+    "flare_baseline(text, date, timestamptz)",
+    "flare_day_write(text, date, boolean, bigint)",
+    "outage_confidence_as_of(timestamptz)",
+    "flare_evidence_as_of(text, date, timestamptz)",
 )
+TRIGGER_FUNCTION_NAMES = ", ".join(TRIGGER_FUNCTION_SIGNATURES)
+SQL_FUNCTION_NAMES = ", ".join(SQL_FUNCTION_SIGNATURES)
+PINNED = TRIGGER_FUNCTION_SIGNATURES + SQL_FUNCTION_SIGNATURES
 
 
 def _create_triggers() -> None:
@@ -523,6 +533,8 @@ def upgrade() -> None:
         op.execute(statement)
     _create_triggers()
     for statement in CURRENT_FUNCTIONS + SCORE_FUNCTIONS + EVIDENCE_FUNCTIONS:
+        op.execute(statement)
+    for statement in pin_search_path(*PINNED):
         op.execute(statement)
     op.execute(f"REVOKE ALL ON {TABLES} FROM PUBLIC")
     op.execute(f"REVOKE EXECUTE ON FUNCTION {TRIGGER_FUNCTION_NAMES} FROM PUBLIC")

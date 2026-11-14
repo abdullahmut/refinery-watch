@@ -3,6 +3,19 @@
 The operator runs every command here by hand. Each entry gives the symptom, the likely cause, the
 commands and how to verify.
 
+## Index
+
+- [Provision a fresh stack](#provision-a-fresh-stack): no Droplets, or a rebuild.
+- [SSH unreachable after first boot](#ssh-unreachable-after-first-boot): timeout or refusal.
+- [Start Postgres on the data Droplet](#start-postgres-on-the-data-droplet): new data Droplet.
+- [Postgres down after a reboot](#postgres-down-after-a-reboot): container exited.
+- [How each job connects to Postgres](#how-each-job-connects-to-postgres): which role, which
+  variables, where the owner password lives.
+- [Rotate a database password](#rotate-a-database-password): leaked or due.
+- [Reset the laptop database](#reset-the-laptop-database): clean local start.
+- [Create the R2 buckets and tokens](#create-the-r2-buckets-and-tokens): first object store setup.
+- [Flare signal](#flare-signal): first setup, and when a flare job fails.
+
 ## Provision a fresh stack
 
 Symptom: no Droplets exist, or the stack was destroyed and must be rebuilt.
@@ -286,7 +299,17 @@ other, never both: the job refuses to start if both are set.
 
 Migrations and seeds connect as `refinery_owner`. The operator supplies `PG_OWNER_PASSWORD`
 (with `PG_OWNER_USER` if the role name differs), or `OWNER_DATABASE_URL`, in the shell at run
-time only. Neither goes in any `.env`, on any Droplet. The same both-set rule applies.
+time only:
+
+```
+read -rs PG_OWNER_PASSWORD && export PG_OWNER_PASSWORD
+python -m refinery_watch.db.migrate
+unset PG_OWNER_PASSWORD
+```
+
+On the Droplets, the owner password is stored only in the data Droplet's `.env`. Compose passes it
+to the postgres container, which keeps it in its environment, and the init script uses it once to
+create the role. It is never in the ingest or app `.env`, and no job reads it from a file. The same both-set rule applies.
 
 Each role reads only its own override. Plain `DATABASE_URL` is not read by anything. Errors name
 the missing variable and never print a password or a connection string.
@@ -566,7 +589,7 @@ Run these in order, by hand.
    than 1,000 quiet scored plant-days.
 6. `python -m refinery_watch.flare alert` on app. This is a dry run. It prints the subject and body
    of each alert that would go out, and writes and sends nothing. Read the output.
-7. Ask platform to add the cron lines: `flare fetch` on ingest every 3 hours at minute 40 under the
+7. Add the cron lines: `flare fetch` on ingest every 3 hours at minute 40 under the
    ingest job lock, and `flare alert --send` on app every 30 minutes with its own lock and a 128 MB
    limit.
 
@@ -593,5 +616,5 @@ Exit codes: 0 ok, 1 failed, 2 setting or usage, 3 refused. Each job writes a `jo
 ### Limits
 
 The fetch holds one FIRMS reply at a time, 5 MB at most, inside the 192 MB container limit specified
-for each ingest job, which is not set in Compose yet. Nothing else runs at the same time. The alert job runs on app with a
-128 MB limit. No statistics run in Python.
+for each ingest job, which is not set in Compose yet. Nothing else runs at the same time. The
+alert job runs on app with a 128 MB limit. No statistics run in Python.

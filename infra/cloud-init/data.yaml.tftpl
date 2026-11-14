@@ -1,0 +1,71 @@
+#cloud-config
+ssh_pwauth: false
+disable_root: true
+
+users:
+  - name: deploy
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - "${ssh_public_key}"
+
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - fail2ban
+  - python3-systemd
+  - unattended-upgrades
+  - git
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-refinery-watch.conf
+    permissions: "0644"
+    content: |
+      Port ${ssh_port}
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      AllowUsers deploy
+  - path: /etc/fail2ban/jail.d/sshd.local
+    permissions: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      port = ${ssh_port}
+      backend = systemd
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}
+
+runcmd:
+  - - sh
+    - -c
+    - >-
+      set -e;
+      mkdir -p /run/sshd;
+      sshd -t;
+      systemctl daemon-reload;
+      if systemctl is-enabled --quiet ssh.socket;
+      then systemctl restart ssh.socket;
+      else systemctl restart ssh.service;
+      fi
+  - [usermod, -aG, docker, deploy]
+  - [systemctl, enable, --now, docker]
+  - [systemctl, enable, fail2ban]
+  - [systemctl, restart, fail2ban]
+  - [systemctl, enable, --now, unattended-upgrades]
+  - [install, -d, -o, deploy, -g, deploy, -m, "0755", /opt/refinery-watch]
+  - [sudo, -u, deploy, git, clone, --depth, "1", --branch, "${repo_ref}", "${repo_url}", /opt/refinery-watch]

@@ -323,17 +323,16 @@ def test_a_source_known_after_the_time_does_not_move_the_first_report(db: Conn) 
     start = FIRST + timedelta(days=100)
     _flags(db, {start: report_time(start) - timedelta(hours=10)})
     found = event(db, start)
-    db.execute(
-        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence,"
-        " known_at) VALUES (%s, %s, 'corroboration', 'other_media', 'text', %s)",
-        (
-            found,
-            document(db, report_time(start) - timedelta(hours=30)),
-            datetime.now(UTC) + timedelta(days=1),
-        ),
-    )
-    f = figures(db, clock(db) + timedelta(seconds=1), "signal")
-    assert f.median_lead_hours == Decimal("10.0")
+    stamp = db.execute(
+        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence)"
+        " VALUES (%s, %s, 'corroboration', 'other_media', 'text') RETURNING known_at",
+        (found, document(db, report_time(start) - timedelta(hours=30))),
+    ).fetchone()
+    assert stamp is not None
+    before = figures(db, stamp["known_at"] - timedelta(microseconds=1), "signal")
+    assert before.median_lead_hours == Decimal("10.0")
+    after = figures(db, stamp["known_at"], "signal")
+    assert after.median_lead_hours == Decimal("-20.0")
 
 
 def test_the_results_always_carry_the_fixed_limits_line(db: Conn) -> None:

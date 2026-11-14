@@ -37,7 +37,7 @@ class NewDocument:
     source_id: str
     url: str
     original: bytes
-    ext: Literal["html", "json"]
+    ext: Literal["html", "json", "csv"]
     content_type: str
     content_sha256: str
     headline: str | None

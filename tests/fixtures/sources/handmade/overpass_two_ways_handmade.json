@@ -1,0 +1,33 @@
+{
+  "version": 0.6,
+  "generator": "handmade",
+  "osm3s": {"copyright": "synthetic test data"},
+  "elements": [
+    {
+      "type": "way",
+      "id": 9000002,
+      "bounds": {"minlat": 29.80, "minlon": -95.10, "maxlat": 29.82, "maxlon": -95.08},
+      "geometry": [
+        {"lat": 29.80, "lon": -95.10},
+        {"lat": 29.80, "lon": -95.08},
+        {"lat": 29.82, "lon": -95.08},
+        {"lat": 29.82, "lon": -95.10},
+        {"lat": 29.80, "lon": -95.10}
+      ],
+      "tags": {"industrial": "refinery"}
+    },
+    {
+      "type": "way",
+      "id": 9000001,
+      "bounds": {"minlat": 29.735, "minlon": -95.022, "maxlat": 29.755, "maxlon": -95.002},
+      "geometry": [
+        {"lat": 29.735, "lon": -95.022},
+        {"lat": 29.735, "lon": -95.002},
+        {"lat": 29.755, "lon": -95.002},
+        {"lat": 29.755, "lon": -95.022},
+        {"lat": 29.735, "lon": -95.022}
+      ],
+      "tags": {"industrial": "refinery"}
+    }
+  ]
+}

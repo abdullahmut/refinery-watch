@@ -18,6 +18,11 @@ def test_object_key_layout() -> None:
     assert object_key("hp_news", fetched, SHA, "html") == f"raw/hp_news/2026/11/10/{SHA}.html"
 
 
+def test_object_key_accepts_csv() -> None:
+    fetched = datetime(2026, 11, 10, 22, 0, tzinfo=UTC)
+    assert object_key("nasa_firms", fetched, SHA, "csv") == f"raw/nasa_firms/2026/11/10/{SHA}.csv"
+
+
 def test_object_key_date_is_utc() -> None:
     fetched = datetime(2026, 11, 10, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
     assert object_key("eia_wpsr", fetched, SHA, "json") == f"raw/eia_wpsr/2026/11/11/{SHA}.json"

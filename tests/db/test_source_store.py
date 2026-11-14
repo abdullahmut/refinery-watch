@@ -185,3 +185,18 @@ def test_unrelated_integrity_error_is_not_swallowed(app: Conn, run_id: int) -> N
     bad = replace(make_doc("badsource"), source_id="no_such_source")
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         store_document(app, FakeStore(), run_id, bad)
+
+
+def test_a_csv_document_is_stored_with_a_csv_key(app: Conn, run_id: int) -> None:
+    store = FakeStore()
+    doc = replace(
+        make_doc("grid"),
+        ext="csv",
+        content_type="text/csv",
+        original=b"latitude,longitude\n1,2\n",
+    )
+    result = store_document(app, store, run_id, doc)
+    assert isinstance(result, Stored)
+    assert result.object_key.endswith(f"{doc.content_sha256}.csv")
+    assert store.types[result.object_key] == "text/csv"
+    assert one_row(app, doc.content_sha256)["object_key"] == result.object_key

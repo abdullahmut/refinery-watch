@@ -3,3 +3,5 @@ hp_news,Invented HP news,2,Global,rss,https://hp.example.com/rss?feed=news,https
 hp_refining,Invented HP refining,2,Global,rss,https://hp.example.com/rss?topic=refining,https://hp.example.com/news/<id>,open,120,Invented row.,no
 gdelt_doc,Invented GDELT DOC,3,Global,api,https://gdelt.example.com/api/v2/doc/doc,n/a,open,60,Invented row.,no
 eia_wpsr,Invented EIA weekly,1,US,api,https://eia.example.com/v2/petroleum/pnp/wiup/data/,https://eia.example.com/,open,10080,Invented row.,no
+osm_overpass,Invented Overpass,3,Global,api,https://overpass.example.com/api/interpreter,n/a,open,43200,Invented row.,no
+nasa_firms,Invented FIRMS,1,Global,api,https://firms.example.com/api/area/csv/,n/a,api_key_required,180,Invented row.,no

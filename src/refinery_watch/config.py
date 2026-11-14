@@ -147,3 +147,83 @@ def object_store_settings() -> ObjectStoreSettings:
         access_key=_required("OBJECT_STORE_ACCESS_KEY"),
         secret_key=_required("OBJECT_STORE_SECRET_KEY"),
     )
+
+
+_FIRMS_KEY = re.compile(r"[A-Za-z0-9]{20,64}")
+_ADDRESS_BAD = re.compile(r"[\s<>,;\"]")
+_DISPLAY_NAME = re.compile(r"[A-Za-z0-9 .-]{1,60}")
+MAX_ADDRESS_CHARS = 254
+MAX_RECIPIENTS = 20
+ALERT_DAILY_MAX_DEFAULT = 10
+ALERT_DAILY_MAX_RANGE = (1, 50)
+
+
+def firms_map_key() -> str:
+    value = _required("FIRMS_MAP_KEY")
+    if not _FIRMS_KEY.fullmatch(value):
+        raise ConfigError("FIRMS_MAP_KEY must be 20 to 64 letters and digits")
+    return value
+
+
+def refinery_locations_csv_path() -> Path:
+    path = Path(_required("REFINERY_LOCATIONS_CSV_PATH"))
+    if not path.is_file():
+        raise ConfigError(f"REFINERY_LOCATIONS_CSV_PATH is not a file: {path}")
+    return path
+
+
+def _is_address(value: str) -> bool:
+    local, sep, domain = value.partition("@")
+    return (
+        bool(sep)
+        and bool(local)
+        and "@" not in domain
+        and "." in domain
+        and len(value) <= MAX_ADDRESS_CHARS
+        and _ADDRESS_BAD.search(value) is None
+    )
+
+
+def note_recipients() -> tuple[str, ...]:
+    """NOTE_RECIPIENTS: comma-separated addresses, de-duplicated without regard to case."""
+    raw = os.environ.get("NOTE_RECIPIENTS", "")
+    items = [item.strip() for item in raw.split(",")] if raw.strip() else []
+    if not items or not all(_is_address(item) for item in items):
+        raise ConfigError("NOTE_RECIPIENTS must be 1 to 20 plain addresses, comma-separated")
+    seen: dict[str, str] = {}
+    for item in items:
+        seen.setdefault(item.lower(), item)
+    if len(seen) > MAX_RECIPIENTS:
+        raise ConfigError("NOTE_RECIPIENTS must be 1 to 20 plain addresses, comma-separated")
+    return tuple(seen.values())
+
+
+def note_from() -> str:
+    """NOTE_FROM: an address, or Display Name <address>."""
+    value = _required("NOTE_FROM")
+    address = value
+    if "<" in value or ">" in value:
+        name, sep, rest = value.partition("<")
+        if not sep or not rest.endswith(">") or not _DISPLAY_NAME.fullmatch(name.strip()):
+            raise ConfigError("NOTE_FROM must be an address or Name <address>")
+        address = rest[:-1]
+    if not _is_address(address):
+        raise ConfigError("NOTE_FROM must be an address or Name <address>")
+    return value
+
+
+def resend_api_key() -> str:
+    value = _required("RESEND_API_KEY")
+    if re.search(r"\s", value):
+        raise ConfigError("RESEND_API_KEY must not contain whitespace")
+    return value
+
+
+def flare_alert_daily_max() -> int:
+    raw = os.environ.get("FLARE_ALERT_DAILY_MAX", "").strip()
+    if not raw:
+        return ALERT_DAILY_MAX_DEFAULT
+    low, high = ALERT_DAILY_MAX_RANGE
+    if not re.fullmatch(r"[0-9]{1,3}", raw) or not low <= int(raw) <= high:
+        raise ConfigError("FLARE_ALERT_DAILY_MAX must be a whole number from 1 to 50")
+    return int(raw)

@@ -454,3 +454,53 @@ def test_redirect_hops_to_one_host_are_spaced() -> None:
     fetcher, _, clock = make_fetcher(handler)
     fetcher.get("https://a.example.com/a")
     assert clock.waits == [5.0, 5.0]
+
+
+def test_same_host_refuses_a_redirect_to_another_host() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "start.example.org":
+            return httpx.Response(302, headers={"location": "https://other.example.org/x?k=1"})
+        return httpx.Response(200, content=b"elsewhere")
+
+    fetcher, net, _ = make_fetcher(handler)
+    with pytest.raises(AddressRefused, match="cross_host_redirect"):
+        fetcher.get("https://start.example.org/a", same_host=True)
+    assert [r.url.host for r in net.requests] == ["start.example.org"]
+
+
+def test_same_host_still_follows_a_redirect_on_the_same_host() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": "/b"})
+        return httpx.Response(200, content=b"ok")
+
+    fetcher, _, _ = make_fetcher(handler)
+    assert fetcher.get("https://start.example.org/a", same_host=True).body == b"ok"
+
+
+def test_without_same_host_a_cross_host_redirect_is_followed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "start.example.org":
+            return httpx.Response(302, headers={"location": "https://other.example.org/x"})
+        return httpx.Response(200, content=b"elsewhere")
+
+    fetcher, _, _ = make_fetcher(handler)
+    assert fetcher.get("https://start.example.org/a").body == b"elsewhere"
+
+
+@pytest.mark.parametrize(
+    "target", ["http://start.example.org/b", "ftp://start.example.org/b", "//start.example.org/b"]
+)
+def test_same_host_refuses_a_redirect_that_leaves_https(target: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, content=b"plain")
+
+    fetcher, net, _ = make_fetcher(handler)
+    if target.startswith("//"):
+        assert fetcher.get("https://start.example.org/a", same_host=True).body == b"plain"
+        return
+    with pytest.raises((AddressRefused, FetchError)):
+        fetcher.get("https://start.example.org/a", same_host=True)
+    assert [r.url.path for r in net.requests] == ["/a"]

@@ -1,0 +1,11 @@
+Testville Refinery, United States, US Gulf.
+
+Satellite detections on 2026-11-12 (UTC day): 5, total fire radiative power 120.5 MW.
+
+Its 90-day median is 0.0 MW over 90 scored days. It usually shows no detections. Score 9.60, alert threshold 6.00 (default).
+
+Footprint: OpenStreetMap outline.
+
+News or regulator item: none found as of 09:38 Dubai time.
+
+Signal only. Not a confirmed outage and not capacity. Cloud, satellite timing and small flares can hide flaring. Nearby fires can look like it. Times are Asia/Dubai. Detections: NASA FIRMS VIIRS (Suomi NPP, NOAA-20).

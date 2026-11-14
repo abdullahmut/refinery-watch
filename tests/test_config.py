@@ -9,9 +9,15 @@ from refinery_watch.config import (
     contact_email,
     eia_api_key,
     fetch_ipv6,
+    firms_map_key,
+    flare_alert_daily_max,
+    note_from,
+    note_recipients,
     object_store_settings,
     owner_database_url,
     refineries_csv_path,
+    refinery_locations_csv_path,
+    resend_api_key,
 )
 
 PG_VARS = (
@@ -314,3 +320,124 @@ def test_fetch_ipv6_rejects_other_values(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("FETCH_IPV6", "maybe")
     with pytest.raises(ConfigError, match="FETCH_IPV6"):
         fetch_ipv6()
+
+
+def test_firms_map_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FIRMS_MAP_KEY", raising=False)
+    with pytest.raises(ConfigError, match="FIRMS_MAP_KEY"):
+        firms_map_key()
+    for bad in ("", "abc123", "a" * 19, "a" * 65, "abcdefghij-abcdefghijk", "a" * 20 + "/"):
+        monkeypatch.setenv("FIRMS_MAP_KEY", bad)
+        with pytest.raises(ConfigError, match="FIRMS_MAP_KEY") as info:
+            firms_map_key()
+        assert not bad or bad not in str(info.value)
+    monkeypatch.setenv("FIRMS_MAP_KEY", "k" * 32)
+    assert firms_map_key() == "k" * 32
+
+
+def test_refinery_locations_csv_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("REFINERY_LOCATIONS_CSV_PATH", raising=False)
+    with pytest.raises(ConfigError, match="REFINERY_LOCATIONS_CSV_PATH"):
+        refinery_locations_csv_path()
+    monkeypatch.setenv("REFINERY_LOCATIONS_CSV_PATH", str(tmp_path))
+    with pytest.raises(ConfigError, match="REFINERY_LOCATIONS_CSV_PATH"):
+        refinery_locations_csv_path()
+    f = tmp_path / "l.csv"
+    f.write_text("x\n")
+    monkeypatch.setenv("REFINERY_LOCATIONS_CSV_PATH", str(f))
+    assert refinery_locations_csv_path() == f
+
+
+RECIPIENT_BAD = [
+    None,
+    "",
+    "a@b",
+    "a@b.com,",
+    ",".join(f"u{i}@b.com" for i in range(21)),
+    "a@b.com\nx",
+    "<a@b.com>",
+    "a b@c.com",
+    "a@b@c.com",
+    "@b.com",
+    "a@b.com;c@d.com",
+    "a" * 250 + "@b.com",
+]
+
+
+@pytest.mark.parametrize("value", RECIPIENT_BAD)
+def test_note_recipients_refused(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv("NOTE_RECIPIENTS", raising=False)
+    else:
+        monkeypatch.setenv("NOTE_RECIPIENTS", value)
+    with pytest.raises(ConfigError, match="NOTE_RECIPIENTS") as info:
+        note_recipients()
+    assert not value or value not in str(info.value)
+
+
+def test_note_recipients_dedupe_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTE_RECIPIENTS", "A@b.com, a@B.com,c@d.org")
+    assert note_recipients() == ("A@b.com", "c@d.org")
+
+
+def test_note_recipients_twenty_is_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTE_RECIPIENTS", ",".join(f"u{i}@b.com" for i in range(20)))
+    assert len(note_recipients()) == 20
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["note@example.com", "refinery-watch <note@example.com>", "R.W 2 <note@example.com>"],
+)
+def test_note_from_accepted(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("NOTE_FROM", value)
+    assert note_from() == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "x <y@z.com>\r\nBcc: q@r.com",
+        "nobody",
+        "x <y@z>",
+        "<y@z.com",
+        "bad*name <y@z.com>",
+        " <y@z.com>",
+        "a@b.com>",
+    ],
+)
+def test_note_from_refused(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("NOTE_FROM", value)
+    with pytest.raises(ConfigError, match="NOTE_FROM") as info:
+        note_from()
+    assert value not in str(info.value)
+
+
+def test_note_from_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NOTE_FROM", raising=False)
+    with pytest.raises(ConfigError, match="NOTE_FROM"):
+        note_from()
+
+
+def test_resend_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with pytest.raises(ConfigError, match="RESEND_API_KEY"):
+        resend_api_key()
+    monkeypatch.setenv("RESEND_API_KEY", "re_secret value")
+    with pytest.raises(ConfigError, match="RESEND_API_KEY") as info:
+        resend_api_key()
+    assert "re_secret" not in str(info.value)
+    monkeypatch.setenv("RESEND_API_KEY", "re_secret_value")
+    assert resend_api_key() == "re_secret_value"
+
+
+def test_flare_alert_daily_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FLARE_ALERT_DAILY_MAX", raising=False)
+    assert flare_alert_daily_max() == 10
+    for good, expected in (("1", 1), ("50", 50), (" 7 ", 7)):
+        monkeypatch.setenv("FLARE_ALERT_DAILY_MAX", good)
+        assert flare_alert_daily_max() == expected
+    for bad in ("0", "51", "ten", "-1", "1.5"):
+        monkeypatch.setenv("FLARE_ALERT_DAILY_MAX", bad)
+        with pytest.raises(ConfigError, match="FLARE_ALERT_DAILY_MAX"):
+            flare_alert_daily_max()

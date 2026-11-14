@@ -306,8 +306,14 @@ class Fetcher:
         *,
         params: Sequence[tuple[str, str]] = (),
         accept: str = "*/*",
+        same_host: bool = False,
     ) -> FetchResult:
+        """GET with robots, spacing and backoff.
+
+        `same_host` refuses a redirect to another host, or to anything but https.
+        """
         current = urlsplit(url)._replace(fragment="").geturl()
+        origin = host_key(current)
         send_params = params
         for _hop in range(MAX_REDIRECTS + 1):
             self._check_target(current)
@@ -315,7 +321,12 @@ class Fetcher:
             reply = self._send(current, send_params, accept)
             location = reply.headers.get("location")
             if 300 <= reply.status < 400 and location:
-                current = urlsplit(urljoin(current, location))._replace(fragment="").geturl()
+                target = urlsplit(urljoin(current, location))._replace(fragment="").geturl()
+                if same_host and host_key(target) != origin:
+                    raise AddressRefused("cross_host_redirect", current)
+                if same_host and urlsplit(target).scheme != "https":
+                    raise AddressRefused("insecure_redirect", current)
+                current = target
                 send_params = ()
                 continue
             if reply.status != 200:

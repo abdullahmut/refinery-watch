@@ -178,14 +178,18 @@ def test_a_news_source_on_a_later_revision_of_the_chain_counts(db: Conn) -> None
 
 def test_a_source_known_after_the_time_does_not_count(db: Conn) -> None:
     event = lift_candidate(db, kind="regulator")
-    db.execute(
-        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence,"
-        " known_at) VALUES (%s, %s, 'corroboration', 'other_media', 'text', %s)",
-        (event, add_document(db, next(_docs)), LATER + timedelta(hours=1)),
-    )
-    flagged_day(db, date(2026, 10, 11))
-    assert effective(db, event, LATER) == "low"
-    assert effective(db, event, LATER + timedelta(hours=2)) == "medium"
+    _, day = flagged_day(db, date(2026, 10, 11))
+    day_known = db.execute("SELECT known_at FROM flare_day WHERE id = %s", (day,)).fetchone()
+    assert day_known is not None
+    stamp = db.execute(
+        "INSERT INTO event_source (outage_event_id, raw_document_id, role, source_kind, evidence)"
+        " VALUES (%s, %s, 'corroboration', 'other_media', 'text') RETURNING known_at",
+        (event, add_document(db, next(_docs))),
+    ).fetchone()
+    assert stamp is not None
+    assert day_known["known_at"] < stamp["known_at"]
+    assert effective(db, event, stamp["known_at"] - timedelta(microseconds=1)) == "low"
+    assert effective(db, event, stamp["known_at"]) == "medium"
 
 
 def test_a_restart_row_is_never_lifted(db: Conn) -> None:

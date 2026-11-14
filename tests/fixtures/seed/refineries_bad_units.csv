@@ -1,0 +1,2 @@
+refinery_id,name,aliases,country,region,owner,nameplate_kbd,major_units,status,source_url,verified,verified_on,notes
+R9004,Badunits Refinery,,United States,US Gulf,Test Oil Co,128,CDU 128 kb/d,operating,,no,,Free text in major_units.

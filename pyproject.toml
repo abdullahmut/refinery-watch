@@ -7,7 +7,11 @@ name = "refinery-watch"
 version = "0.1.0"
 description = "Refinery outage tracker."
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "alembic>=1.20.1",
+    "psycopg[binary]>=3.3.8",
+    "sqlalchemy>=2.1.8",
+]
 classifiers = ["Private :: Do Not Upload"]
 
 [tool.uv]
@@ -30,12 +34,14 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
+markers = ["integration: needs Postgres on 127.0.0.1"]
 filterwarnings = ["error"]
 
 [tool.coverage.run]
-source_pkgs = ["refinery_watch"]
+source = ["src/refinery_watch"]
 branch = true
 
 [tool.coverage.report]
@@ -52,7 +58,7 @@ src = ["src", "tests"]
 select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "DTZ", "S", "T20", "ERA", "FIX", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S608"]
 
 [tool.ruff.format]
 line-ending = "lf"

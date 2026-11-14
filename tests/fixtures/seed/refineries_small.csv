@@ -1,0 +1,4 @@
+refinery_id,name,aliases,country,region,owner,nameplate_kbd,major_units,status,source_url,verified,verified_on,notes
+R9001,Testville Refinery,,United States,US Gulf,Test Oil Co,200,CDU;VDU;FCC,operating,https://example.test/r9001,no,,Invented plant with three units.
+R9002,Old Harbour Refinery,,Netherlands,NW Europe,Test Energy,150,CDU,closed_or_converted,,no,,Invented closed plant.
+R9003,Samplebay Refinery,Samplebay;Sample Bay Works,Singapore,Singapore,,,HCU;CDU,operating,,yes,2026-01-15,Invented plant with two aliases.

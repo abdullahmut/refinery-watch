@@ -21,6 +21,7 @@ MIGRATIONS = (
     "r0007_dedupe_functions",
     "r0008_note_price_tceq",
     "r0009_flare_signal",
+    "r0010_tceq_price_stamp",
 )
 
 INSERT = (

@@ -131,24 +131,22 @@ def test_note_can_link_to_the_previous_note(db: Conn) -> None:
 
 
 def test_price_revision_is_a_new_row(db: Conn) -> None:
-    for known, value in ((ts(10), "80.0"), (ts(11), "81.5")):
-        db.execute(
-            "INSERT INTO price (series, observed_on, value, unit, source_id, known_at)"
-            " VALUES ('eia.util.us', '2025-11-07', %s, 'pct', 'fixture_src', %s)",
-            (Decimal(value), known),
-        )
-    latest = db.execute(
+    stamps = []
+    for value in ("80.0", "81.5"):
+        row = db.execute(
+            "INSERT INTO price (series, observed_on, value, unit, source_id)"
+            " VALUES ('eia.util.us', '2025-11-07', %s, 'pct', 'fixture_src') RETURNING known_at",
+            (Decimal(value),),
+        ).fetchone()
+        assert row is not None
+        stamps.append(row["known_at"])
+    assert stamps[0] < stamps[1]
+    sql = (
         "SELECT value FROM price WHERE series = 'eia.util.us' AND known_at <= %s"
-        " ORDER BY known_at DESC LIMIT 1",
-        (ts(10, 12),),
-    ).fetchone()
-    assert latest == {"value": Decimal("80.0000")}
-    with pytest.raises(psycopg.errors.UniqueViolation), db.transaction():
-        db.execute(
-            "INSERT INTO price (series, observed_on, value, unit, source_id, known_at)"
-            " VALUES ('eia.util.us', '2025-11-07', 1, 'pct', 'fixture_src', %s)",
-            (ts(11),),
-        )
+        " ORDER BY known_at DESC LIMIT 1"
+    )
+    assert db.execute(sql, (stamps[0],)).fetchone() == {"value": Decimal("80.0000")}
+    assert db.execute(sql, (stamps[1],)).fetchone() == {"value": Decimal("81.5000")}
     with pytest.raises(psycopg.errors.CheckViolation), db.transaction():
         db.execute(
             "INSERT INTO price (series, observed_on, value, unit, source_id)"
@@ -184,6 +182,6 @@ def test_app_role_can_call_the_spend_function(db: Conn, app_db: Conn) -> None:
     assert row == {"p": False}
 
 
-def test_head_revision_is_0009(db: Conn, session_schema: str) -> None:
+def test_head_revision_is_0010(db: Conn, session_schema: str) -> None:
     row = db.execute(f"SELECT version_num FROM {session_schema}.alembic_version").fetchone()
-    assert row == {"version_num": "0009"}
+    assert row == {"version_num": "0010"}
